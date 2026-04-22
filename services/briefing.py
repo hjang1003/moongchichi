@@ -38,7 +38,11 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
         logger.info("Today (%s) is not a weekday, skipping briefing.", date_str)
         return False
 
-    profile = await sheets.get_profile()
+    try:
+        profile = await sheets.get_profile()
+    except Exception as e:
+        logger.error("Failed to load profile from sheets: %s", e)
+        profile = {}
 
     try:
         briefing_text = await claude.generate_briefing(profile, theme, date_str, weekday_ko)

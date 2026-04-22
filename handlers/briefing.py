@@ -20,7 +20,11 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     chat_id = update.effective_chat.id
     await update.message.reply_text("📬 브리핑을 가져오는 중이에요... 잠깐만요!")
-    success = await create_and_send_briefing(context, chat_id)
+    try:
+        success = await create_and_send_briefing(context, chat_id)
+    except Exception as e:
+        logger.error("Unhandled error in create_and_send_briefing: %s", e)
+        success = False
     if not success:
         await update.message.reply_text("일시적인 오류가 발생했어요 😥 잠시 후 다시 시도해 주세요!")
 
