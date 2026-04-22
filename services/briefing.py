@@ -83,13 +83,6 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
                 logger.error("Failed to send briefing section %d: %s", idx, e)
                 return False
 
-        if footer:
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=footer)
-            except Exception as e:
-                logger.error("Failed to send briefing footer: %s", e)
-                return False
-
         cached_sections = content_sections
     else:
         # Fallback: send as split messages with one button on the last part

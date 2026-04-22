@@ -55,11 +55,22 @@ def _content_to_blocks(content: str) -> List[dict]:
     return blocks
 
 
+BLOCK_BATCH_SIZE = 100  # Notion API limit per append call
+
+
 class NotionService:
     def __init__(self):
         self._client = AsyncClient(auth=config.NOTION_API_KEY)
         self._briefing_db_id = _normalize_notion_id(config.NOTION_BRIEFING_DATABASE_ID)
         self._saved_db_id = _normalize_notion_id(config.NOTION_SAVED_DATABASE_ID)
+
+    async def _append_blocks(self, page_id: str, blocks: List[dict]) -> None:
+        """Append blocks to a page in batches of 100 (Notion API limit)."""
+        for i in range(0, len(blocks), BLOCK_BATCH_SIZE):
+            await self._client.blocks.children.append(
+                block_id=page_id,
+                children=blocks[i : i + BLOCK_BATCH_SIZE],
+            )
 
     async def save_to_briefing_db(
         self,
@@ -79,9 +90,10 @@ class NotionService:
                     "저장여부": {"checkbox": saved},
                     "소스링크": {"rich_text": [{"type": "text", "text": {"content": sources_text}}]},
                 },
-                children=_content_to_blocks(content),
             )
-            return response["id"]
+            page_id = response["id"]
+            await self._append_blocks(page_id, _content_to_blocks(content))
+            return page_id
         except Exception as e:
             logger.error("Notion save_to_briefing_db failed: %s", e)
             return None
@@ -99,9 +111,10 @@ class NotionService:
                     "날짜": {"date": {"start": date_str}},
                     "요일테마": {"title": [{"text": {"content": theme[:255]}}]},
                 },
-                children=_content_to_blocks(content),
             )
-            return response["id"]
+            page_id = response["id"]
+            await self._append_blocks(page_id, _content_to_blocks(content))
+            return page_id
         except Exception as e:
             logger.error("Notion save_to_saved_db failed: %s", e)
             return None
