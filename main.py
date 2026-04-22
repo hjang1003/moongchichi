@@ -23,6 +23,7 @@ from handlers.general import (
 from handlers.callbacks import handle_notion_save, handle_notion_delete, handle_source_view
 from scheduler import setup_scheduler
 from services.sheets import get_sheets
+from services.notion import get_notion
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -33,12 +34,18 @@ logger = logging.getLogger(__name__)
 
 async def post_init(app: Application) -> None:
     """Called inside the event loop after the app is initialized."""
+    sheets = get_sheets()
     try:
-        sheets = get_sheets()
         alarm_time = await sheets.get_setting("알람_시간")
         alarm_time = alarm_time if alarm_time else "08:00"
     except Exception:
         alarm_time = "08:00"
+
+    try:
+        notion = get_notion()
+        await notion.ensure_databases(sheets)
+    except Exception as e:
+        logger.warning("Notion DB auto-setup failed (non-fatal): %s", e)
 
     setup_scheduler(app, alarm_time)
     logger.info("Moongchichi bot ready. Daily briefing at %s KST (weekdays).", alarm_time)

@@ -162,6 +162,83 @@ class NotionService:
             logger.error("Notion delete_page failed: %s", e)
             return False
 
+    async def ensure_databases(self, sheets) -> None:
+        """Auto-create Notion databases if IDs are not set in env vars.
+
+        Priority: env var → Sheets setting → create via API (requires NOTION_PARENT_PAGE_ID).
+        Created IDs are saved to Sheets so they survive restarts without env vars.
+        """
+        parent_page_id = (
+            _normalize_notion_id(config.NOTION_PARENT_PAGE_ID)
+            if config.NOTION_PARENT_PAGE_ID
+            else ""
+        )
+
+        # Briefing DB
+        if not self._briefing_db_id:
+            saved = await sheets.get_setting("NOTION_BRIEFING_DATABASE_ID")
+            if saved:
+                self._briefing_db_id = _normalize_notion_id(saved)
+
+        if not self._briefing_db_id:
+            if not parent_page_id:
+                logger.warning("NOTION_BRIEFING_DATABASE_ID not set and NOTION_PARENT_PAGE_ID missing — skipping auto-create.")
+            else:
+                db_id = await self._create_briefing_db(parent_page_id)
+                if db_id:
+                    self._briefing_db_id = db_id
+                    await sheets.set_setting("NOTION_BRIEFING_DATABASE_ID", db_id)
+                    logger.info("Auto-created Notion briefing DB: %s", db_id)
+
+        # Saved briefings DB
+        if not self._saved_db_id:
+            saved = await sheets.get_setting("NOTION_SAVED_DATABASE_ID")
+            if saved:
+                self._saved_db_id = _normalize_notion_id(saved)
+
+        if not self._saved_db_id:
+            if not parent_page_id:
+                logger.warning("NOTION_SAVED_DATABASE_ID not set and NOTION_PARENT_PAGE_ID missing — skipping auto-create.")
+            else:
+                db_id = await self._create_saved_db(parent_page_id)
+                if db_id:
+                    self._saved_db_id = db_id
+                    await sheets.set_setting("NOTION_SAVED_DATABASE_ID", db_id)
+                    logger.info("Auto-created Notion saved briefings DB: %s", db_id)
+
+    async def _create_briefing_db(self, parent_page_id: str) -> str:
+        try:
+            response = await self._client.databases.create(
+                parent={"type": "page_id", "page_id": parent_page_id},
+                title=[{"type": "text", "text": {"content": "마케팅 브리핑"}}],
+                properties={
+                    "요일테마": {"title": {}},
+                    "날짜": {"date": {}},
+                    "저장여부": {"checkbox": {}},
+                    "소스링크": {"rich_text": {}},
+                },
+            )
+            return _normalize_notion_id(response["id"])
+        except Exception as e:
+            logger.error("Failed to create briefing DB in Notion: %s", e)
+            return ""
+
+    async def _create_saved_db(self, parent_page_id: str) -> str:
+        try:
+            response = await self._client.databases.create(
+                parent={"type": "page_id", "page_id": parent_page_id},
+                title=[{"type": "text", "text": {"content": "저장된 브리핑"}}],
+                properties={
+                    "요일테마": {"title": {}},
+                    "날짜": {"date": {}},
+                    "메모": {"rich_text": {}},
+                },
+            )
+            return _normalize_notion_id(response["id"])
+        except Exception as e:
+            logger.error("Failed to create saved briefings DB in Notion: %s", e)
+            return ""
+
     async def reset_briefing_db(self) -> None:
         try:
             response = await self._client.databases.query(database_id=self._briefing_db_id)
