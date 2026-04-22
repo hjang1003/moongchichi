@@ -4,6 +4,7 @@ import logging
 
 from telegram.ext import (
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
     filters,
@@ -19,6 +20,7 @@ from handlers.general import (
     cmd_profile, cmd_history, cmd_feedback, cmd_help,
     handle_natural_language,
 )
+from handlers.callbacks import handle_notion_save, handle_notion_delete, handle_source_view
 from scheduler import setup_scheduler
 from services.sheets import get_sheets
 
@@ -69,6 +71,11 @@ def main() -> None:
     app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("feedback", cmd_feedback))
     app.add_handler(CommandHandler("help", cmd_help))
+
+    # Inline button callbacks
+    app.add_handler(CallbackQueryHandler(handle_notion_save, pattern=r"^notion_save:"))
+    app.add_handler(CallbackQueryHandler(handle_notion_delete, pattern=r"^notion_delete:"))
+    app.add_handler(CallbackQueryHandler(handle_source_view, pattern=r"^source_view:"))
 
     # Natural language fallback
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_natural_language))

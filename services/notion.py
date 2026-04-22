@@ -155,6 +155,14 @@ class NotionService:
         except Exception:
             return ""
 
+    async def delete_page(self, page_id: str) -> bool:
+        try:
+            await self._client.pages.update(page_id=page_id, archived=True)
+            return True
+        except Exception as e:
+            logger.error("Notion delete_page failed: %s", e)
+            return False
+
     async def reset_briefing_db(self) -> None:
         try:
             response = await self._client.databases.query(
