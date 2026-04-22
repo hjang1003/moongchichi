@@ -195,11 +195,12 @@ class SheetsService:
     async def is_authenticated(self, chat_id: int) -> bool:
         user_id = await self.get_setting("사용자_ChatID")
         admin_id = await self.get_setting("관리자_ChatID")
-        return str(chat_id) in [str(user_id), str(admin_id)]
+        valid_ids = {s.strip() for s in [str(user_id), str(admin_id)] if s and s.strip()}
+        return str(chat_id) in valid_ids
 
     async def is_admin(self, chat_id: int) -> bool:
         admin_id = await self.get_setting("관리자_ChatID")
-        return str(chat_id) == str(admin_id)
+        return bool(admin_id) and str(chat_id) == str(admin_id).strip()
 
     async def is_active(self) -> bool:
         status = await self.get_setting("봇_상태")

@@ -77,11 +77,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     chat_id = update.effective_chat.id
     sheets = get_sheets()
 
-    if await sheets.is_authenticated(chat_id):
-        await update.message.reply_text(
-            "✅ 이미 인증되어 있어요! /help 로 명령어를 확인해 보세요 😊"
-        )
-        return ConversationHandler.END
+    # 온보딩이 완료된 사용자_ChatID 본인만 이미 완료 처리 (관리자는 항상 비밀번호 흐름 진입)
+    user_id = await sheets.get_setting("사용자_ChatID")
+    if user_id and str(user_id).strip() and str(chat_id) == str(user_id).strip():
+        profile = await sheets.get_profile()
+        if str(profile.get("온보딩완료", "")).lower() == "true":
+            await update.message.reply_text(
+                "✅ 이미 설정이 완료됐어요! /help 로 명령어를 확인해 보세요 😊"
+            )
+            return ConversationHandler.END
 
     if is_blocked(chat_id):
         await update.message.reply_text(
@@ -214,7 +218,9 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "온보딩날짜": utils.date_to_str(now),
         }
         await sheets.set_profile_bulk(profile_data)
-        await sheets.set_setting("사용자_ChatID", str(chat_id))
+        # 관리자가 테스트로 온보딩을 진행하더라도 사용자_ChatID를 덮어쓰지 않음
+        if not await sheets.is_admin(chat_id):
+            await sheets.set_setting("사용자_ChatID", str(chat_id))
         await sheets.set_setting("마지막_업데이트", utils.date_to_str(now))
 
         msg1 = (
