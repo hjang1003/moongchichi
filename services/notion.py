@@ -13,12 +13,27 @@ RICH_TEXT_LIMIT = 2000
 
 
 def _normalize_notion_id(raw_id: str) -> str:
-    """Ensure Notion ID is in 8-4-4-4-12 UUID format."""
+    """Ensure Notion ID is in 8-4-4-4-12 UUID format.
+
+    Handles full URLs like https://www.notion.so/DB-34a1205853e280978a58e6213c507e42
+    by extracting the 32-char hex ID from the end of the last path segment.
+    """
     clean = raw_id.strip()
     # Already in UUID format
     if re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", clean, re.I):
         return clean
-    # 32 hex chars without hyphens → insert hyphens
+    # Strip URL down to last path segment (handles https://www.notion.so/DB-<hex> forms)
+    if "/" in clean:
+        clean = clean.rstrip("/").split("/")[-1]
+    # Remove query string
+    if "?" in clean:
+        clean = clean.split("?")[0]
+    # Find exactly 32 consecutive hex chars at the end of the segment (handles "DB-<32hex>" prefix)
+    match = re.search(r"[0-9a-f]{32}$", clean, re.I)
+    if match:
+        h = match.group(0).lower()
+        return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}"
+    # Fallback: strip all non-hex chars; if exactly 32 remain, use them
     hex_only = re.sub(r"[^0-9a-fA-F]", "", clean)
     if len(hex_only) == 32:
         return f"{hex_only[:8]}-{hex_only[8:12]}-{hex_only[12:16]}-{hex_only[16:20]}-{hex_only[20:]}"
