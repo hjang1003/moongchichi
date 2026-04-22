@@ -226,6 +226,15 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
     async def answer_natural_language(
         self, query: str, history: List[Dict], profile: Dict[str, str]
     ) -> str:
+        system_prompt = (
+            "당신은 마케팅을 잘 아는 친한 선배예요.\n"
+            "편하고 자연스러운 말투로 답변하세요. 너무 격식 있거나 AI스러운 느낌은 금물이에요.\n"
+            "마크다운 문법은 절대 사용하지 마세요. **, ##, 표(|---|), 코드블록 전부 금지예요.\n"
+            "항목을 나열할 때는 표 대신 줄바꿈으로 구분하세요.\n"
+            "제목이나 소제목 없이 자연스러운 문단으로 써주세요.\n"
+            "이모지는 전체 답변에서 1~2개만 사용하세요.\n"
+            "답변은 간결하게. 핵심만 짚고 너무 길게 늘어놓지 마세요."
+        )
         history_summary = "\n".join(
             [f"- {h.get('날짜', '')} ({h.get('요일테마', '')})" for h in history[-5:]]
         )
@@ -236,13 +245,12 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
 최근 브리핑 이력:
 {history_summary or "없음"}
 
-사용자 질문: {query}
-
-마케팅 전문가로서 친근하게 답변해 주세요. 브리핑 이력을 참조해서 구체적으로 답변하세요."""
+사용자 질문: {query}"""
 
         message = await self._client.messages.create(
             model=config.CLAUDE_FAST_MODEL,
             max_tokens=1024,
+            system=system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
         return message.content[0].text
