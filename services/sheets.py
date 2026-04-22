@@ -102,6 +102,15 @@ class SheetsService:
     async def set_profile_bulk(self, data: Dict[str, str]) -> None:
         await self._run(self._sync_set_profile_bulk, data)
 
+    def _sync_append_additional_request(self, request: str, date_str: str) -> None:
+        existing = self._sync_get_profile().get("추가요청사항", "")
+        new_value = (f"{existing}\n[{date_str}] {request}" if existing else f"[{date_str}] {request}").strip()
+        self._sync_set_profile("추가요청사항", new_value)
+        self._sync_set_profile("요청사항_업데이트일", date_str)
+
+    async def append_additional_request(self, request: str, date_str: str) -> None:
+        await self._run(self._sync_append_additional_request, request, date_str)
+
     # ── Briefing History ──────────────────────────────────────────────────
 
     def _sync_add_history(

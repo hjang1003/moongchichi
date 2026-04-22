@@ -33,6 +33,9 @@ class ClaudeService:
             "반드시 실존하는 페이지의 실제 URL을 작성하고, 가상의 URL은 절대 사용하지 마세요."
         )
 
+        additional_requests = profile.get("추가요청사항", "")
+        additional_section = f"\n- 추가 요청사항:\n{additional_requests}" if additional_requests else ""
+
         user_prompt = f"""오늘은 {date_str} ({weekday_ko})이며, 오늘의 브리핑 테마는 "{theme}"입니다.
 
 사용자 프로필:
@@ -41,7 +44,7 @@ class ClaudeService:
 - 관심 업종: {profile.get("관심업종", "")}
 - 관심 플랫폼: {profile.get("관심플랫폼", "")}
 - 글로벌 여부: {profile.get("글로벌여부", "국내위주")}
-- 기타 요청: {profile.get("기타요청", "없음")}
+- 기타 요청: {profile.get("기타요청", "없음")}{additional_section}
 
 콘텐츠 비율: 관심 업종 {industry_ratio}% / 인접 산업 {adjacent_ratio}% / 전체 트렌드 {trend_ratio}%
 
@@ -197,6 +200,21 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
             messages=[{"role": "user", "content": prompt}],
         )
         return message.content[0].text
+
+    async def is_service_request(self, message: str) -> bool:
+        prompt = (
+            f'다음 메시지가 마케팅 브리핑 봇에 대한 서비스 요청사항인지 판단하세요.\n'
+            f'(브리핑 수준, 말투, 주제, 분량, 형식 변경 요청 등 모두 포함)\n'
+            f'메시지: "{message}"\n'
+            f'예/아니오로만 답하세요.'
+        )
+        msg = await self._client.messages.create(
+            model=config.CLAUDE_FAST_MODEL,
+            max_tokens=10,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        answer = msg.content[0].text.strip().lower()
+        return "예" in answer or "yes" in answer
 
     async def is_marketing_topic(self, topic: str) -> bool:
         prompt = f'"{topic}"은 마케팅 관련 주제입니까? 예/아니오로만 답하세요.'

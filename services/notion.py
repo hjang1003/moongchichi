@@ -68,8 +68,8 @@ def _extract_section_title(content: str, date_str: str) -> str:
     except Exception:
         prefix = ""
     title = next((line.strip() for line in content.splitlines() if line.strip()), "")
-    if len(title) > 15:
-        title = title[:15] + "..."
+    if len(title) > 30:
+        title = title[:30] + "..."
     return f"{prefix}{title}"
 
 

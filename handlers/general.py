@@ -99,6 +99,10 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if not args:
         profile = await sheets.get_profile()
+        additional = profile.get("추가요청사항", "")
+        additional_display = (additional[:200] + "...") if len(additional) > 200 else (additional or "-")
+        last_updated = profile.get("요청사항_업데이트일", "")
+        additional_line = f"\n추가요청사항: {additional_display}" + (f" ({last_updated})" if last_updated else "")
         await update.message.reply_text(
             f"👤 내 프로필\n\n"
             f"목표직무: {profile.get('목표직무', '-')}\n"
@@ -106,7 +110,8 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"관심업종: {profile.get('관심업종', '-')}\n"
             f"관심플랫폼: {profile.get('관심플랫폼', '-')}\n"
             f"글로벌여부: {profile.get('글로벌여부', '-')}\n"
-            f"기타요청: {profile.get('기타요청', '-')}\n\n"
+            f"기타요청: {profile.get('기타요청', '-')}"
+            f"{additional_line}\n\n"
             f"📊 콘텐츠 비율\n"
             f"관심업종비율: {profile.get('관심업종비율', '60')}%\n"
             f"인접산업비율: {profile.get('인접산업비율', '30')}%\n"
@@ -228,8 +233,26 @@ async def handle_natural_language(update: Update, context: ContextTypes.DEFAULT_
         return
 
     claude = get_claude()
-    history = await sheets.get_history(limit=5)
 
+    # Check if this is a service request (briefing style, format, topic preference, etc.)
+    try:
+        is_request = await claude.is_service_request(query)
+    except Exception as e:
+        logger.error("is_service_request check failed: %s", e)
+        is_request = False
+
+    if is_request:
+        now = utils.get_korea_now()
+        date_str = utils.date_to_str(now)
+        try:
+            await sheets.append_additional_request(query, date_str)
+            await update.message.reply_text("요청사항이 저장됐어요! 다음 브리핑부터 반영할게요 😊")
+        except Exception as e:
+            logger.error("append_additional_request failed: %s", e)
+            await update.message.reply_text("일시적인 오류가 발생했어요 😥 잠시 후 다시 시도해 주세요!")
+        return
+
+    history = await sheets.get_history(limit=5)
     profile = await sheets.get_profile()
     try:
         answer = await claude.answer_natural_language(query, history, profile)
