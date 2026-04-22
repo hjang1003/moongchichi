@@ -29,21 +29,21 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("일시적인 오류가 발생했어요 😥 잠시 후 다시 시도해 주세요!")
 
 
-async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await require_auth(update, context):
         return
-    now = utils.get_korea_now()
-    weekday_ko = config.WEEKDAY_KO.get(now.weekday(), "")
-    theme = utils.get_weekday_theme(now)
-    if not theme:
-        await update.message.reply_text("오늘은 주말이라 브리핑이 없어요 😊\n주중에 만나요!")
-        return
-    date_display = utils.format_date_korean(now)
     await update.message.reply_text(
-        f"📅 오늘의 브리핑 테마\n\n"
-        f"{date_display}\n"
-        f"📌 {theme}\n\n"
-        f"오늘의 브리핑을 바로 받으려면 /briefing 을 눌러 주세요!"
+        "📆 요일별 브리핑 안내\n\n"
+        "월요일 📱 — 플랫폼 & 알고리즘 동향\n"
+        "인스타그램, 유튜브, 틱톡, 네이버 등 주요 플랫폼이 알고리즘을 어떻게 바꿨는지, 마케터로서 어떻게 대응해야 하는지를 다뤄요. 한 주를 이 내용으로 시작하면 콘텐츠 전략을 그에 맞게 짤 수 있거든요.\n\n"
+        "화요일 🎯 — 캠페인 & 브랜드 사례 분석\n"
+        "최근 화제가 됐거나 성과가 좋았던 마케팅 캠페인을 하나 골라서 깊게 파고들어요. \"왜 이게 먹혔는지\", \"어떤 전략이었는지\"를 분석해서 실무에서 바로 써먹을 수 있는 인사이트로 전달해드려요.\n\n"
+        "수요일 📊 — 데이터 & 리포트\n"
+        "Nielsen, Meta, Google, 대형 광고대행사 등 공신력 있는 기관에서 발표한 리포트와 데이터를 요약해드려요. 면접이나 업무에서 바로 인용할 수 있는 수치들 위주로 골라드립니다.\n\n"
+        "목요일 💼 — 커리어 & 스킬 / 퍼포먼스 마케팅 (격주 교체)\n"
+        "격주로 바뀌어요. 한 주는 마케터 취업 시장 분석, 포트폴리오 팁, 요즘 채용 공고에서 요구하는 스킬을 다루고요. 다음 주는 퍼포먼스 마케팅 — ROAS, CTR, 메타/구글 광고 집행 전략 같은 실무 내용을 다뤄요.\n\n"
+        "금요일 📰 — 주간 정리 + 읽을거리\n"
+        "그 주 마케팅 업계에서 있었던 주요 소식을 짧게 정리하고, 주말에 여유 있게 읽어볼 만한 아티클이나 리포트 2-3개를 링크와 함께 추천해드려요."
     )
 
 

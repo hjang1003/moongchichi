@@ -12,12 +12,11 @@ from telegram.ext import (
 
 import config
 from handlers.onboarding import get_onboarding_handler
-from handlers.briefing import cmd_briefing, cmd_today, cmd_recap, cmd_topic, cmd_term
-from handlers.notion_cmds import cmd_save, cmd_source
+from handlers.briefing import cmd_briefing, cmd_schedule, cmd_recap, cmd_topic, cmd_term
 from handlers.admin import cmd_reset
 from handlers.general import (
-    cmd_status, cmd_pause, cmd_resume, cmd_alarm,
-    cmd_profile, cmd_request, cmd_history, cmd_feedback, cmd_help,
+    cmd_pause, cmd_resume, cmd_alarm,
+    cmd_profile, cmd_update, cmd_request, cmd_feedback, cmd_help,
     handle_natural_language,
 )
 from handlers.callbacks import handle_notion_save, handle_notion_delete, handle_source_view
@@ -64,26 +63,21 @@ def main() -> None:
 
     # Briefing commands
     app.add_handler(CommandHandler("briefing", cmd_briefing))
-    app.add_handler(CommandHandler("today", cmd_today))
+    app.add_handler(CommandHandler("schedule", cmd_schedule))
     app.add_handler(CommandHandler("recap", cmd_recap))
     app.add_handler(CommandHandler("topic", cmd_topic))
     app.add_handler(CommandHandler("term", cmd_term))
-
-    # Notion commands
-    app.add_handler(CommandHandler("save", cmd_save))
-    app.add_handler(CommandHandler("source", cmd_source))
 
     # Admin
     app.add_handler(CommandHandler("reset", cmd_reset))
 
     # General commands
-    app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("pause", cmd_pause))
     app.add_handler(CommandHandler("resume", cmd_resume))
     app.add_handler(CommandHandler("alarm", cmd_alarm))
     app.add_handler(CommandHandler("profile", cmd_profile))
+    app.add_handler(CommandHandler("update", cmd_update))
     app.add_handler(CommandHandler("request", cmd_request))
-    app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("feedback", cmd_feedback))
     app.add_handler(CommandHandler("help", cmd_help))
 

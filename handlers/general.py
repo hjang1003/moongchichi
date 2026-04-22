@@ -15,32 +15,6 @@ import config
 logger = logging.getLogger(__name__)
 
 
-async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await require_auth(update, context):
-        return
-    sheets = get_sheets()
-    profile = await sheets.get_profile()
-    alarm_time = await sheets.get_setting("알람_시간")
-    bot_status = await sheets.get_setting("봇_상태")
-    last_update = await sheets.get_setting("마지막_업데이트")
-
-    await update.message.reply_text(
-        f"📊 현재 설정\n\n"
-        f"봇 상태: {bot_status or '활성'}\n"
-        f"알람 시간: {alarm_time or '08:00'} (KST)\n"
-        f"마지막 업데이트: {last_update or '-'}\n\n"
-        f"👤 프로필\n"
-        f"목표직무: {profile.get('목표직무', '-')}\n"
-        f"경력수준: {profile.get('경력수준', '-')}\n"
-        f"관심업종: {profile.get('관심업종', '-')}\n"
-        f"관심플랫폼: {profile.get('관심플랫폼', '-')}\n"
-        f"글로벌여부: {profile.get('글로벌여부', '-')}\n\n"
-        f"📊 비율\n"
-        f"관심업종: {profile.get('관심업종비율', '60')}%\n"
-        f"인접산업: {profile.get('인접산업비율', '30')}%\n"
-        f"전체트렌드: {profile.get('전체트렌드비율', '10')}%"
-    )
-
 
 async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await require_auth(update, context):
@@ -99,12 +73,14 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if not args:
         profile = await sheets.get_profile()
+        alarm_time = await sheets.get_setting("알람_시간")
+        bot_status = await sheets.get_setting("봇_상태")
         additional = profile.get("추가요청사항", "")
         additional_display = (additional[:200] + "...") if len(additional) > 200 else (additional or "-")
         last_updated = profile.get("요청사항_업데이트일", "")
         additional_line = f"\n추가요청사항: {additional_display}" + (f" ({last_updated})" if last_updated else "")
         await update.message.reply_text(
-            f"👤 내 프로필\n\n"
+            f"👤 프로필\n"
             f"목표직무: {profile.get('목표직무', '-')}\n"
             f"경력수준: {profile.get('경력수준', '-')}\n"
             f"관심업종: {profile.get('관심업종', '-')}\n"
@@ -116,6 +92,12 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"관심업종비율: {profile.get('관심업종비율', '60')}%\n"
             f"인접산업비율: {profile.get('인접산업비율', '30')}%\n"
             f"전체트렌드비율: {profile.get('전체트렌드비율', '10')}%\n\n"
+            f"⚙️ 브리핑 설정\n"
+            f"알람 시간: {alarm_time or '08:00'} (KST)\n"
+            f"봇 상태: {bot_status or '활성'}\n\n"
+            f"✏️ 프로필 수정: /update [항목] [값]\n"
+            f"예: /update 목표직무 퍼포먼스마케터\n"
+            f"수정 가능 항목: 목표직무, 경력수준, 관심업종, 관심플랫폼, 글로벌여부, 기타요청\n\n"
             f"비율 변경: /profile ratio 50 40 10\n"
             f"(관심업종 % / 인접산업 % / 전체트렌드 %)"
         )
@@ -143,6 +125,44 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
 
+UPDATABLE_FIELDS = ["목표직무", "경력수준", "관심업종", "관심플랫폼", "글로벌여부", "기타요청"]
+
+
+async def cmd_update(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_auth(update, context):
+        return
+    args = context.args
+    if not args or len(args) < 2:
+        await update.message.reply_text(
+            "수정할 항목과 값을 입력해 주세요!\n"
+            "예: /update 목표직무 퍼포먼스마케터\n\n"
+            f"수정 가능 항목: {', '.join(UPDATABLE_FIELDS)}"
+        )
+        return
+
+    field = args[0]
+    value = " ".join(args[1:])
+
+    if field not in UPDATABLE_FIELDS:
+        await update.message.reply_text(
+            f"'{field}'은 수정할 수 없는 항목이에요.\n"
+            f"수정 가능 항목: {', '.join(UPDATABLE_FIELDS)}"
+        )
+        return
+
+    sheets = get_sheets()
+    profile = await sheets.get_profile()
+    old_value = profile.get(field, "-")
+    try:
+        await sheets.set_profile(field, value)
+        await update.message.reply_text(
+            f"✅ {field}이(가) [{old_value}] → [{value}]으로 변경됐어요!"
+        )
+    except Exception as e:
+        logger.error("cmd_update set_profile failed: %s", e)
+        await update.message.reply_text("일시적인 오류가 발생했어요 😥 잠시 후 다시 시도해 주세요!")
+
+
 async def cmd_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await require_auth(update, context):
         return
@@ -164,23 +184,6 @@ async def cmd_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.error("append_additional_request failed: %s", e)
         await update.message.reply_text("일시적인 오류가 발생했어요 😥 잠시 후 다시 시도해 주세요!")
 
-
-async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await require_auth(update, context):
-        return
-    sheets = get_sheets()
-    history = await sheets.get_history(limit=10)
-    if not history:
-        await update.message.reply_text("아직 브리핑 이력이 없어요!")
-        return
-
-    lines = ["📋 최근 브리핑 이력\n"]
-    for row in reversed(history):
-        date = row.get("날짜", "")
-        theme = row.get("요일테마", "")
-        saved = "⭐" if str(row.get("노션저장여부", "")).lower() == "true" else ""
-        lines.append(f"• {date} | {theme} {saved}")
-    await update.message.reply_text("\n".join(lines))
 
 
 async def cmd_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -213,24 +216,19 @@ async def cmd_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "🐾 뭉치치 명령어 목록\n\n"
-        "📰 브리핑\n"
+        "/alarm [시간] — 알람 시간 변경 (예: /alarm 09:00)\n"
         "/briefing — 지금 즉시 브리핑\n"
-        "/today — 오늘 요일 테마 확인\n"
-        "/recap [날짜] — 특정 날짜 브리핑 이력 보기\n"
-        "/topic [주제] — 특정 주제 브리핑\n"
-        "/term [용어] — 마케팅 용어 설명\n\n"
-        "📒 노션\n"
-        "/save — (브리핑 답장) 노션에 저장\n"
-        "/source — (브리핑 답장) 소스 링크 전체 보기\n\n"
-        "⚙️ 설정\n"
-        "/status — 현재 설정 확인\n"
+        "/feedback [내용] — 개발자에게 전달\n"
         "/pause — 브리핑 일시 중단\n"
+        "/profile — 프로필 및 설정 전체 보기\n"
+        "/recap [날짜] — 특정 날짜 브리핑 이력 보기\n"
+        "/request [내용] — 브리핑 관련 요청사항 저장\n"
         "/resume — 브리핑 재개\n"
-        "/alarm [시간] — 알람 시간 변경\n"
-        "/profile — 프로필 보기 / 비율 조정\n"
-        "/request [내용] — 브리핑 관련 요청사항 저장 (다음 브리핑부터 반영)\n"
-        "/history — 최근 브리핑 목록\n"
-        "/feedback [내용] — 개발자에게 전달\n\n"
+        "/schedule — 요일별 브리핑 테마 안내\n"
+        "/term [용어] — 마케팅 용어 설명\n"
+        "/topic [주제] — 특정 주제 브리핑\n"
+        "/update [항목] [값] — 프로필 항목 수정\n"
+        "/help — 명령어 목록\n\n"
         "💬 자연어로 질문도 가능해요!\n"
         "예: '저번 주 캠페인 사례 뭐였더라?'"
     )
