@@ -1,8 +1,8 @@
 from __future__ import annotations
-import asyncio
 import logging
 
 from telegram.ext import (
+    Application,
     ApplicationBuilder,
     CallbackQueryHandler,
     CommandHandler,
@@ -31,19 +31,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def _read_alarm_time() -> str:
+async def post_init(app: Application) -> None:
+    """Called inside the event loop after the app is initialized."""
     try:
         sheets = get_sheets()
-        t = await sheets.get_setting("알람_시간")
-        return t if t else "08:00"
+        alarm_time = await sheets.get_setting("알람_시간")
+        alarm_time = alarm_time if alarm_time else "08:00"
     except Exception:
-        return "08:00"
+        alarm_time = "08:00"
+
+    setup_scheduler(app, alarm_time)
+    logger.info("Moongchichi bot ready. Daily briefing at %s KST (weekdays).", alarm_time)
 
 
 def main() -> None:
-    alarm_time = asyncio.run(_read_alarm_time())
-
-    app = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(config.TELEGRAM_BOT_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
     # Onboarding conversation (handles /start and auth flow)
     app.add_handler(get_onboarding_handler())
@@ -80,10 +87,6 @@ def main() -> None:
     # Natural language fallback
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_natural_language))
 
-    # Setup daily scheduler with alarm time from sheets
-    setup_scheduler(app, alarm_time)
-
-    logger.info("Moongchichi bot starting... (alarm: %s KST)", alarm_time)
     app.run_polling(drop_pending_updates=True)
 
 
