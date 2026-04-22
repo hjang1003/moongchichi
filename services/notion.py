@@ -244,8 +244,8 @@ class NotionService:
                 title=[{"type": "text", "text": {"content": "저장된 브리핑"}}],
                 properties={
                     "요일테마": {"title": {}},
-                    "날짜": {"date": {}},
                     "제목": {"rich_text": {}},
+                    "날짜": {"date": {}},
                     "메모": {"rich_text": {}},
                 },
             )
