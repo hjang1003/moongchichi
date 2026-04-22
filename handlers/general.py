@@ -228,7 +228,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/resume — 브리핑 재개\n"
         "/alarm [시간] — 알람 시간 변경\n"
         "/profile — 프로필 보기 / 비율 조정\n"
-        "/request [내용] — 브리핑 요청사항 저장\n"
+        "/request [내용] — 브리핑 관련 요청사항 저장 (다음 브리핑부터 반영)\n"
         "/history — 최근 브리핑 목록\n"
         "/feedback [내용] — 개발자에게 전달\n\n"
         "💬 자연어로 질문도 가능해요!\n"
