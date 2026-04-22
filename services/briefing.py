@@ -6,7 +6,6 @@ from typing import List
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from services.sheets import get_sheets
-from services.notion import get_notion
 from services.claude import get_claude
 import utils
 import config
@@ -33,9 +32,8 @@ def parse_briefing_sections(text: str) -> List[str]:
 
 
 async def create_and_send_briefing(context, chat_id: int) -> bool:
-    """Generate briefing, send per-section to chat_id, save to sheets + notion. Returns True on success."""
+    """Generate briefing and send per-section to chat_id. Returns True on success."""
     sheets = get_sheets()
-    notion = get_notion()
     claude = get_claude()
 
     now = utils.get_korea_now()
@@ -109,16 +107,8 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
         "saved_page_ids": {},
     }
 
-    # Auto-save to Notion briefing DB
-    notion_saved = False
     try:
-        page_id = await notion.save_to_briefing_db(date_str, theme, briefing_text, sources)
-        notion_saved = page_id is not None
-    except Exception as e:
-        logger.error("Notion briefing DB save failed (non-fatal): %s", e)
-
-    try:
-        await sheets.add_history(date_str, theme, True, sources, notion_saved)
+        await sheets.add_history(date_str, theme, True, sources, False)
     except Exception as e:
         logger.error("Sheets history save failed: %s", e)
 

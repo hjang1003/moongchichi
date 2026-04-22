@@ -1,4 +1,5 @@
 from __future__ import annotations
+import datetime
 import logging
 import re
 from typing import List, Optional
@@ -58,6 +59,20 @@ def _content_to_blocks(content: str) -> List[dict]:
 BLOCK_BATCH_SIZE = 100  # Notion API limit per append call
 
 
+def _extract_section_title(content: str, date_str: str) -> str:
+    """Extract first non-empty line as title, prefix with [요일], truncate to 15 chars."""
+    try:
+        d = datetime.date.fromisoformat(date_str)
+        weekday_ko = config.WEEKDAY_KO.get(d.weekday(), "")
+        prefix = f"[{weekday_ko}] " if weekday_ko else ""
+    except Exception:
+        prefix = ""
+    title = next((line.strip() for line in content.splitlines() if line.strip()), "")
+    if len(title) > 15:
+        title = title[:15] + "..."
+    return f"{prefix}{title}"
+
+
 class NotionService:
     def __init__(self):
         self._client = AsyncClient(auth=config.NOTION_API_KEY)
@@ -105,11 +120,13 @@ class NotionService:
         content: str,
     ) -> Optional[str]:
         try:
+            section_title = _extract_section_title(content, date_str)
             response = await self._client.pages.create(
                 parent={"database_id": self._saved_db_id},
                 properties={
                     "날짜": {"date": {"start": date_str}},
                     "요일테마": {"title": [{"text": {"content": theme[:255]}}]},
+                    "제목": {"rich_text": [{"type": "text", "text": {"content": section_title}}]},
                 },
             )
             page_id = response["id"]
@@ -176,32 +193,16 @@ class NotionService:
             return False
 
     async def ensure_databases(self, sheets) -> None:
-        """Auto-create Notion databases if IDs are not set in env vars.
+        """Auto-create the saved-briefings DB if the ID is not set in env vars.
 
         Priority: env var → Sheets setting → create via API (requires NOTION_PARENT_PAGE_ID).
-        Created IDs are saved to Sheets so they survive restarts without env vars.
+        Created ID is saved to Sheets so it survives restarts without the env var.
         """
         parent_page_id = (
             _normalize_notion_id(config.NOTION_PARENT_PAGE_ID)
             if config.NOTION_PARENT_PAGE_ID
             else ""
         )
-
-        # Briefing DB
-        if not self._briefing_db_id:
-            saved = await sheets.get_setting("NOTION_BRIEFING_DATABASE_ID")
-            if saved:
-                self._briefing_db_id = _normalize_notion_id(saved)
-
-        if not self._briefing_db_id:
-            if not parent_page_id:
-                logger.warning("NOTION_BRIEFING_DATABASE_ID not set and NOTION_PARENT_PAGE_ID missing — skipping auto-create.")
-            else:
-                db_id = await self._create_briefing_db(parent_page_id)
-                if db_id:
-                    self._briefing_db_id = db_id
-                    await sheets.set_setting("NOTION_BRIEFING_DATABASE_ID", db_id)
-                    logger.info("Auto-created Notion briefing DB: %s", db_id)
 
         # Saved briefings DB
         if not self._saved_db_id:
@@ -244,6 +245,7 @@ class NotionService:
                 properties={
                     "요일테마": {"title": {}},
                     "날짜": {"date": {}},
+                    "제목": {"rich_text": {}},
                     "메모": {"rich_text": {}},
                 },
             )

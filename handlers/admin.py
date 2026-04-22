@@ -24,7 +24,6 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• 프로필 탭\n"
         "• 브리핑이력 탭\n"
         "• 사용자 Chat ID\n"
-        "• 노션 마케팅 브리핑 DB\n"
         "• 노션 저장된 브리핑 DB\n\n"
         "확인하려면 '초기화확인' 을 입력해 주세요."
     )
@@ -53,7 +52,6 @@ async def handle_reset_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         notion = get_notion()
         await sheets.reset_all()
-        await notion.reset_briefing_db()
         await notion.reset_saved_db()
         await update.message.reply_text("✅ 초기화 완료! 봇을 새로 시작할 수 있어요.")
     except Exception as e:
