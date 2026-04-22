@@ -201,21 +201,6 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
         )
         return message.content[0].text
 
-    async def is_service_request(self, message: str) -> bool:
-        prompt = (
-            f'다음 메시지가 마케팅 브리핑 봇에 대한 서비스 요청사항인지 판단하세요.\n'
-            f'(브리핑 수준, 말투, 주제, 분량, 형식 변경 요청 등 모두 포함)\n'
-            f'메시지: "{message}"\n'
-            f'예/아니오로만 답하세요.'
-        )
-        msg = await self._client.messages.create(
-            model=config.CLAUDE_FAST_MODEL,
-            max_tokens=10,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        answer = msg.content[0].text.strip().lower()
-        return "예" in answer or "yes" in answer
-
     async def is_marketing_topic(self, topic: str) -> bool:
         prompt = f'"{topic}"은 마케팅 관련 주제입니까? 예/아니오로만 답하세요.'
         message = await self._client.messages.create(

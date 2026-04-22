@@ -143,6 +143,28 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
 
+async def cmd_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_auth(update, context):
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "저장할 요청사항을 입력해주세요.\n예: /request 브리핑 수준 올려줘"
+        )
+        return
+
+    request_text = " ".join(args)
+    now = utils.get_korea_now()
+    date_str = utils.date_to_str(now)
+    sheets = get_sheets()
+    try:
+        await sheets.append_additional_request(request_text, date_str)
+        await update.message.reply_text("요청사항이 저장됐어요! 다음 브리핑부터 반영할게요 😊")
+    except Exception as e:
+        logger.error("append_additional_request failed: %s", e)
+        await update.message.reply_text("일시적인 오류가 발생했어요 😥 잠시 후 다시 시도해 주세요!")
+
+
 async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await require_auth(update, context):
         return
@@ -206,6 +228,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/resume — 브리핑 재개\n"
         "/alarm [시간] — 알람 시간 변경\n"
         "/profile — 프로필 보기 / 비율 조정\n"
+        "/request [내용] — 브리핑 요청사항 저장\n"
         "/history — 최근 브리핑 목록\n"
         "/feedback [내용] — 개발자에게 전달\n\n"
         "💬 자연어로 질문도 가능해요!\n"
@@ -233,25 +256,6 @@ async def handle_natural_language(update: Update, context: ContextTypes.DEFAULT_
         return
 
     claude = get_claude()
-
-    # Check if this is a service request (briefing style, format, topic preference, etc.)
-    try:
-        is_request = await claude.is_service_request(query)
-    except Exception as e:
-        logger.error("is_service_request check failed: %s", e)
-        is_request = False
-
-    if is_request:
-        now = utils.get_korea_now()
-        date_str = utils.date_to_str(now)
-        try:
-            await sheets.append_additional_request(query, date_str)
-            await update.message.reply_text("요청사항이 저장됐어요! 다음 브리핑부터 반영할게요 😊")
-        except Exception as e:
-            logger.error("append_additional_request failed: %s", e)
-            await update.message.reply_text("일시적인 오류가 발생했어요 😥 잠시 후 다시 시도해 주세요!")
-        return
-
     history = await sheets.get_history(limit=5)
     profile = await sheets.get_profile()
     try:

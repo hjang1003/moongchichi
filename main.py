@@ -17,7 +17,7 @@ from handlers.notion_cmds import cmd_save, cmd_source
 from handlers.admin import cmd_reset
 from handlers.general import (
     cmd_status, cmd_pause, cmd_resume, cmd_alarm,
-    cmd_profile, cmd_history, cmd_feedback, cmd_help,
+    cmd_profile, cmd_request, cmd_history, cmd_feedback, cmd_help,
     handle_natural_language,
 )
 from handlers.callbacks import handle_notion_save, handle_notion_delete, handle_source_view
@@ -82,6 +82,7 @@ def main() -> None:
     app.add_handler(CommandHandler("resume", cmd_resume))
     app.add_handler(CommandHandler("alarm", cmd_alarm))
     app.add_handler(CommandHandler("profile", cmd_profile))
+    app.add_handler(CommandHandler("request", cmd_request))
     app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("feedback", cmd_feedback))
     app.add_handler(CommandHandler("help", cmd_help))
