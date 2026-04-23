@@ -52,7 +52,17 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
         profile = {}
 
     try:
-        briefing_text = await claude.generate_briefing(profile, theme, date_str, weekday_ko)
+        recent_sources = await sheets.get_recent_sources(weeks=4)
+        recent_keywords = await sheets.get_recent_keywords(weeks=4)
+    except Exception as e:
+        logger.error("Failed to load recent history from sheets: %s", e)
+        recent_sources, recent_keywords = [], []
+
+    try:
+        briefing_text = await claude.generate_briefing(
+            profile, theme, date_str, weekday_ko,
+            recent_sources=recent_sources, recent_keywords=recent_keywords,
+        )
     except Exception as e:
         logger.error("Failed to generate briefing: %s", e)
         return False
@@ -108,7 +118,13 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
     }
 
     try:
-        await sheets.add_history(date_str, theme, True, sources, False)
+        keywords = await claude.extract_keywords(briefing_text)
+    except Exception as e:
+        logger.error("Keyword extraction failed: %s", e)
+        keywords = []
+
+    try:
+        await sheets.add_history(date_str, theme, True, sources, False, keywords=keywords)
     except Exception as e:
         logger.error("Sheets history save failed: %s", e)
 

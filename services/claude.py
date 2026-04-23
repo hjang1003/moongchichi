@@ -13,7 +13,15 @@ class ClaudeService:
     def __init__(self):
         self._client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
 
-    async def generate_briefing(self, profile: Dict[str, str], theme: str, date_str: str, weekday_ko: str) -> str:
+    async def generate_briefing(
+        self,
+        profile: Dict[str, str],
+        theme: str,
+        date_str: str,
+        weekday_ko: str,
+        recent_sources: Optional[List[str]] = None,
+        recent_keywords: Optional[List[str]] = None,
+    ) -> str:
         industry_ratio = profile.get("관심업종비율", "60")
         adjacent_ratio = profile.get("인접산업비율", "30")
         trend_ratio = profile.get("전체트렌드비율", "10")
@@ -32,6 +40,17 @@ class ClaudeService:
             "공신력 있는 소스(Nielsen, Meta, Google, 대형 광고대행사, 주요 마케팅 미디어) 우선 사용.\n"
             "반드시 실존하는 페이지의 실제 URL을 작성하고, 가상의 URL은 절대 사용하지 마세요."
         )
+
+        if recent_sources:
+            system_prompt += (
+                "\n\n아래 URL들은 최근 4주 내 이미 사용한 출처야. 절대 동일한 URL을 다시 사용하지 마:\n"
+                + "\n".join(f"- {url}" for url in recent_sources)
+            )
+        if recent_keywords:
+            system_prompt += (
+                "\n\n아래는 최근 4주 내 다룬 주제 키워드야. 동일하거나 80% 이상 겹치는 내용은 다루지 마:\n"
+                + "\n".join(f"- {kw}" for kw in recent_keywords)
+            )
 
         additional_requests = profile.get("추가요청사항", "")
         additional_section = f"\n- 추가 요청사항:\n{additional_requests}" if additional_requests else ""
@@ -219,6 +238,20 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
             messages=[{"role": "user", "content": prompt}],
         )
         return message.content[0].text
+
+    async def extract_keywords(self, briefing_text: str) -> List[str]:
+        prompt = (
+            "아래 마케팅 브리핑에서 각 항목의 핵심 주제 키워드를 3개씩 추출해 주세요.\n"
+            "전체 9개 이내, 쉼표로 구분해서 한 줄로만 반환하세요. 키워드만, 설명 없이.\n\n"
+            f"브리핑:\n{briefing_text[:3000]}"
+        )
+        message = await self._client.messages.create(
+            model=config.CLAUDE_FAST_MODEL,
+            max_tokens=120,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = message.content[0].text.strip()
+        return [k.strip() for k in raw.split(",") if k.strip()]
 
     async def is_marketing_topic(self, topic: str) -> bool:
         prompt = f'"{topic}"은 마케팅 관련 주제입니까? 예/아니오로만 답하세요.'

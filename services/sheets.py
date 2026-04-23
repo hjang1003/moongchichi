@@ -21,7 +21,7 @@ SETTINGS_TAB = "설정"
 PROFILE_TAB = "프로필"
 HISTORY_TAB = "브리핑이력"
 
-HISTORY_HEADERS = ["날짜", "요일테마", "발송여부", "소스링크", "노션저장여부"]
+HISTORY_HEADERS = ["날짜", "요일테마", "발송여부", "소스링크", "노션저장여부", "주제키워드"]
 
 
 class SheetsService:
@@ -114,13 +114,15 @@ class SheetsService:
     # ── Briefing History ──────────────────────────────────────────────────
 
     def _sync_add_history(
-        self, date_str: str, theme: str, sent: bool, sources: List[str], notion_saved: bool
+        self, date_str: str, theme: str, sent: bool, sources: List[str], notion_saved: bool,
+        keywords: Optional[List[str]] = None,
     ) -> None:
         ws = self._get_tab(HISTORY_TAB)
         existing = ws.get_all_values()
         if not existing or existing[0] != HISTORY_HEADERS:
             ws.insert_row(HISTORY_HEADERS, 1)
-        ws.append_row([date_str, theme, str(sent), "|".join(sources), str(notion_saved)])
+        keywords_str = "|".join(keywords) if keywords else ""
+        ws.append_row([date_str, theme, str(sent), "|".join(sources), str(notion_saved), keywords_str])
 
     def _sync_get_history(self, limit: int) -> List[Dict]:
         try:
@@ -156,6 +158,36 @@ class SheetsService:
                 ws.update_cell(i, notion_col, "True")
                 return
 
+    def _sync_get_recent_sources(self, weeks: int) -> List[str]:
+        import datetime
+        try:
+            ws = self._get_tab(HISTORY_TAB)
+        except gspread.exceptions.WorksheetNotFound:
+            return []
+        cutoff = (datetime.datetime.now() - datetime.timedelta(weeks=weeks)).strftime("%Y-%m-%d")
+        sources: List[str] = []
+        for row in ws.get_all_records():
+            if str(row.get("날짜", "")) >= cutoff:
+                raw = str(row.get("소스링크", ""))
+                if raw:
+                    sources.extend(s.strip() for s in raw.split("|") if s.strip())
+        return sources
+
+    def _sync_get_recent_keywords(self, weeks: int) -> List[str]:
+        import datetime
+        try:
+            ws = self._get_tab(HISTORY_TAB)
+        except gspread.exceptions.WorksheetNotFound:
+            return []
+        cutoff = (datetime.datetime.now() - datetime.timedelta(weeks=weeks)).strftime("%Y-%m-%d")
+        keywords: List[str] = []
+        for row in ws.get_all_records():
+            if str(row.get("날짜", "")) >= cutoff:
+                raw = str(row.get("주제키워드", ""))
+                if raw:
+                    keywords.extend(k.strip() for k in raw.split("|") if k.strip())
+        return keywords
+
     def _sync_get_saved_history_this_month(self, year: int, month: int) -> List[Dict]:
         try:
             ws = self._get_tab(HISTORY_TAB)
@@ -173,8 +205,17 @@ class SheetsService:
         ws.clear()
         ws.append_row(HISTORY_HEADERS)
 
-    async def add_history(self, date_str: str, theme: str, sent: bool, sources: List[str], notion_saved: bool) -> None:
-        await self._run(self._sync_add_history, date_str, theme, sent, sources, notion_saved)
+    async def add_history(
+        self, date_str: str, theme: str, sent: bool, sources: List[str], notion_saved: bool,
+        keywords: Optional[List[str]] = None,
+    ) -> None:
+        await self._run(self._sync_add_history, date_str, theme, sent, sources, notion_saved, keywords)
+
+    async def get_recent_sources(self, weeks: int = 4) -> List[str]:
+        return await self._run(self._sync_get_recent_sources, weeks)
+
+    async def get_recent_keywords(self, weeks: int = 4) -> List[str]:
+        return await self._run(self._sync_get_recent_keywords, weeks)
 
     async def get_history(self, limit: int = 10) -> List[Dict]:
         return await self._run(self._sync_get_history, limit)
