@@ -241,13 +241,18 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
 
     async def extract_keywords(self, briefing_text: str) -> List[str]:
         prompt = (
-            "아래 마케팅 브리핑에서 각 항목의 핵심 주제 키워드를 3개씩 추출해 주세요.\n"
-            "전체 9개 이내, 쉼표로 구분해서 한 줄로만 반환하세요. 키워드만, 설명 없이.\n\n"
+            "아래 마케팅 브리핑에서 각 항목당 1~2개씩, 전체 최대 6개 키워드를 추출해 주세요.\n\n"
+            "추출 기준:\n"
+            "- 구체적인 툴명, 플랫폼명, 캠페인명, 지표명, 기능명만 추출\n"
+            "- 좋은 예: GA4, 루커 스튜디오, 코호트 분석, 인스타그램 릴스 알고리즘, ROAS, 메타 광고, 올리브영 오늘드림\n"
+            "- 나쁜 예: 데이터 분석, AI 시대, 커리어 역량, 브랜딩, 포트폴리오, T자형 인재, 통합 마케팅\n"
+            "- 추상적인 개념어, 역량어, 방향성 표현은 절대 포함하지 마세요\n\n"
+            "쉼표로 구분해서 한 줄로만 반환하세요. 키워드만, 설명 없이.\n\n"
             f"브리핑:\n{briefing_text[:3000]}"
         )
         message = await self._client.messages.create(
             model=config.CLAUDE_FAST_MODEL,
-            max_tokens=120,
+            max_tokens=100,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = message.content[0].text.strip()
