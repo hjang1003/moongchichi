@@ -56,7 +56,20 @@ async def handle_notion_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.error("Sheets update_notion_saved failed: %s", e)
 
     await query.edit_message_reply_markup(reply_markup=make_section_keyboard(date_str, section_idx, saved=True))
-    await query.answer("✅ 노션에 저장됐어요!", show_alert=True)
+    await query.answer()
+
+    prompt_msg = await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=(
+            "✅ 노션에 저장됐어요!\n\n"
+            "메모를 남기려면 이 메시지에 답장으로 입력해주세요 😊\n"
+            "(건너뛰려면 무시하세요)"
+        ),
+    )
+    context.user_data["pending_memo"] = {
+        "page_id": page_id,
+        "prompt_message_id": prompt_msg.message_id,
+    }
 
 
 async def handle_notion_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

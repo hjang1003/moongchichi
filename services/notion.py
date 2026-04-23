@@ -143,6 +143,21 @@ class NotionService:
         except Exception as e:
             logger.error("Notion update_saved_flag failed: %s", e)
 
+    async def update_memo(self, page_id: str, memo: str) -> bool:
+        try:
+            await self._client.pages.update(
+                page_id=page_id,
+                properties={
+                    "메모": {
+                        "rich_text": [{"type": "text", "text": {"content": memo[:RICH_TEXT_LIMIT]}}]
+                    }
+                },
+            )
+            return True
+        except Exception as e:
+            logger.error("Notion update_memo failed: %s", e)
+            return False
+
     async def get_saved_briefings_this_month(self, year: int, month: int) -> List[dict]:
         try:
             start = f"{year}-{month:02d}-01"

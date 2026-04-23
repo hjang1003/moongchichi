@@ -9,6 +9,7 @@ from handlers.auth import require_auth
 from handlers.admin import handle_reset_confirm
 from services.sheets import get_sheets
 from services.claude import get_claude
+from services.notion import get_notion
 import utils
 import config
 
@@ -247,6 +248,21 @@ async def handle_natural_language(update: Update, context: ContextTypes.DEFAULT_
     # Check for pending reset confirmation
     if context.user_data.get("pending_reset") and await sheets.is_admin(chat_id):
         await handle_reset_confirm(update, context)
+        return
+
+    # Check for pending Notion memo input (reply to the save prompt)
+    pending_memo = context.user_data.get("pending_memo")
+    reply_to = update.message.reply_to_message
+    if pending_memo and reply_to and reply_to.message_id == pending_memo.get("prompt_message_id"):
+        memo_text = update.message.text.strip()
+        if memo_text:
+            notion = get_notion()
+            success = await notion.update_memo(pending_memo["page_id"], memo_text)
+            if success:
+                context.user_data.pop("pending_memo", None)
+                await update.message.reply_text("메모가 저장됐어요 😊")
+            else:
+                await update.message.reply_text("메모 저장에 실패했어요 😥 잠시 후 다시 시도해 주세요!")
         return
 
     query = update.message.text.strip()
