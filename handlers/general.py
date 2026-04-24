@@ -10,6 +10,7 @@ from handlers.admin import handle_reset_confirm
 from services.sheets import get_sheets
 from services.claude import get_claude
 from services.notion import get_notion
+from scheduler import reschedule_jobs
 import utils
 import config
 
@@ -60,9 +61,9 @@ async def cmd_alarm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     sheets = get_sheets()
     await sheets.set_setting("알람_시간", time_str)
+    reschedule_jobs(context.job_queue, time_str)
     await update.message.reply_text(
-        f"⏰ 알람 시간이 {time_str} (KST)으로 변경되었어요!\n"
-        f"(변경 사항은 다음 배포 재시작 시 적용돼요)"
+        f"⏰ 알람 시간이 {time_str} (KST)으로 변경되었어요!"
     )
 
 

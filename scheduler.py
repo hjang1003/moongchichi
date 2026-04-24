@@ -78,7 +78,7 @@ async def _check_monthly_summary(context) -> None:
             logger.error("Failed to send monthly summary to %s: %s", uid, e)
 
 
-def setup_scheduler(app: Application, alarm_time_str: str = "08:00") -> None:
+def reschedule_jobs(job_queue, alarm_time_str: str) -> None:
     hour, minute = map(int, alarm_time_str.split(":"))
 
     briefing_time = datetime.time(hour=hour, minute=minute, tzinfo=KST)
@@ -87,14 +87,18 @@ def setup_scheduler(app: Application, alarm_time_str: str = "08:00") -> None:
     summary_hour = hour if minute < 59 else (hour + 1) % 24
     summary_time = datetime.time(hour=summary_hour, minute=summary_minute, tzinfo=KST)
 
-    app.job_queue.run_daily(
+    for job_name in ("daily_briefing", "monthly_summary"):
+        for job in job_queue.get_jobs_by_name(job_name):
+            job.schedule_removal()
+
+    job_queue.run_daily(
         _send_daily_briefing,
         time=briefing_time,
         days=(0, 1, 2, 3, 4),
         name="daily_briefing",
     )
 
-    app.job_queue.run_daily(
+    job_queue.run_daily(
         _check_monthly_summary,
         time=summary_time,
         days=(0, 1, 2, 3, 4),
@@ -106,3 +110,7 @@ def setup_scheduler(app: Application, alarm_time_str: str = "08:00") -> None:
         hour,
         minute,
     )
+
+
+def setup_scheduler(app: Application, alarm_time_str: str = "08:00") -> None:
+    reschedule_jobs(app.job_queue, alarm_time_str)
