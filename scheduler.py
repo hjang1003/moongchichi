@@ -1,6 +1,5 @@
 from __future__ import annotations
 import logging
-import datetime
 
 from telegram.ext import Application
 
@@ -12,19 +11,30 @@ from services.briefing import create_and_send_briefing
 
 logger = logging.getLogger(__name__)
 
-KST = datetime.timezone(datetime.timedelta(hours=9))
+POLL_INTERVAL_SECONDS = 60
+WEEKDAYS = (0, 1, 2, 3, 4)
 
 
 async def _send_daily_briefing(context) -> None:
-    sheets = get_sheets()
+    now = utils.get_korea_now()
 
+    if now.weekday() not in WEEKDAYS:
+        return
+
+    target_hour, target_minute = context.job.data
+    if now.hour != target_hour or now.minute != target_minute:
+        return
+
+    today_str = now.strftime("%Y-%m-%d")
+    if context.bot_data.get("last_briefing_date") == today_str:
+        return
+
+    sheets = get_sheets()
     if not await sheets.is_active():
         logger.info("Bot is paused, skipping daily briefing.")
         return
 
-    now = utils.get_korea_now()
-    if not utils.is_weekday(now):
-        return
+    context.bot_data["last_briefing_date"] = today_str
 
     user_id = await sheets.get_setting("사용자_ChatID")
     admin_id = await sheets.get_setting("관리자_ChatID")
@@ -40,12 +50,26 @@ async def _send_daily_briefing(context) -> None:
 
 async def _check_monthly_summary(context) -> None:
     now = utils.get_korea_now()
+
+    if now.weekday() not in WEEKDAYS:
+        return
+
+    target_hour, target_minute = context.job.data
+    if now.hour != target_hour or now.minute != target_minute:
+        return
+
     if not utils.is_last_weekday_of_month(now):
+        return
+
+    today_str = now.strftime("%Y-%m-%d")
+    if context.bot_data.get("last_monthly_summary_date") == today_str:
         return
 
     sheets = get_sheets()
     if not await sheets.is_active():
         return
+
+    context.bot_data["last_monthly_summary_date"] = today_str
 
     notion = get_notion()
     claude = get_claude()
@@ -81,34 +105,34 @@ async def _check_monthly_summary(context) -> None:
 def reschedule_jobs(job_queue, alarm_time_str: str) -> None:
     hour, minute = map(int, alarm_time_str.split(":"))
 
-    briefing_time = datetime.time(hour=hour, minute=minute, tzinfo=KST)
-
     summary_minute = minute + 1 if minute < 59 else 0
     summary_hour = hour if minute < 59 else (hour + 1) % 24
-    summary_time = datetime.time(hour=summary_hour, minute=summary_minute, tzinfo=KST)
 
     for job_name in ("daily_briefing", "monthly_summary"):
         for job in job_queue.get_jobs_by_name(job_name):
             job.schedule_removal()
 
-    job_queue.run_daily(
+    job_queue.run_repeating(
         _send_daily_briefing,
-        time=briefing_time,
-        days=(0, 1, 2, 3, 4),
+        interval=POLL_INTERVAL_SECONDS,
+        first=0,
+        data=(hour, minute),
         name="daily_briefing",
     )
 
-    job_queue.run_daily(
+    job_queue.run_repeating(
         _check_monthly_summary,
-        time=summary_time,
-        days=(0, 1, 2, 3, 4),
+        interval=POLL_INTERVAL_SECONDS,
+        first=0,
+        data=(summary_hour, summary_minute),
         name="monthly_summary",
     )
 
     logger.info(
-        "Scheduler ready: daily briefing at %02d:%02d KST (weekdays only)",
+        "Scheduler ready: daily briefing at %02d:%02d KST (weekdays only), polling every %ds",
         hour,
         minute,
+        POLL_INTERVAL_SECONDS,
     )
 
 
