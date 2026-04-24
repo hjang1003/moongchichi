@@ -2,10 +2,8 @@ from __future__ import annotations
 import logging
 import datetime
 
-import pytz
 from telegram.ext import Application
 
-import config
 import utils
 from services.sheets import get_sheets
 from services.notion import get_notion
@@ -14,7 +12,7 @@ from services.briefing import create_and_send_briefing
 
 logger = logging.getLogger(__name__)
 
-KOREA_TZ = pytz.timezone(config.KOREA_TZ)
+KST = datetime.timezone(datetime.timedelta(hours=9))
 
 
 async def _send_daily_briefing(context) -> None:
@@ -83,11 +81,11 @@ async def _check_monthly_summary(context) -> None:
 def setup_scheduler(app: Application, alarm_time_str: str = "08:00") -> None:
     hour, minute = map(int, alarm_time_str.split(":"))
 
-    briefing_time = datetime.time(hour=hour, minute=minute, tzinfo=KOREA_TZ)
+    briefing_time = datetime.time(hour=hour, minute=minute, tzinfo=KST)
 
     summary_minute = minute + 1 if minute < 59 else 0
     summary_hour = hour if minute < 59 else (hour + 1) % 24
-    summary_time = datetime.time(hour=summary_hour, minute=summary_minute, tzinfo=KOREA_TZ)
+    summary_time = datetime.time(hour=summary_hour, minute=summary_minute, tzinfo=KST)
 
     app.job_queue.run_daily(
         _send_daily_briefing,
