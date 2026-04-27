@@ -15,13 +15,13 @@ logger = logging.getLogger(__name__)
 SECTION_SEP_RE = re.compile(r"^━{5,}$", re.MULTILINE)
 
 
-def make_section_keyboard(date_str: str, section_idx: int, saved: bool = False) -> InlineKeyboardMarkup:
+def make_section_keyboard(chat_id: int, date_str: str, section_idx: int, saved: bool = False) -> InlineKeyboardMarkup:
     save_btn = (
-        InlineKeyboardButton("🗑️ 노션에서 삭제", callback_data=f"notion_delete:{date_str}:{section_idx}")
+        InlineKeyboardButton("🗑️ 노션에서 삭제", callback_data=f"notion_delete:{chat_id}:{date_str}:{section_idx}")
         if saved
-        else InlineKeyboardButton("💾 노션에 저장", callback_data=f"notion_save:{date_str}:{section_idx}")
+        else InlineKeyboardButton("💾 노션에 저장", callback_data=f"notion_save:{chat_id}:{date_str}:{section_idx}")
     )
-    source_btn = InlineKeyboardButton("📎 소스 보기", callback_data=f"source_view:{date_str}")
+    source_btn = InlineKeyboardButton("📎 소스 보기", callback_data=f"source_view:{chat_id}:{date_str}")
     return InlineKeyboardMarkup([[save_btn, source_btn]])
 
 
@@ -84,7 +84,7 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
             return False
 
         for idx, section in enumerate(content_sections):
-            keyboard = make_section_keyboard(date_str, idx)
+            keyboard = make_section_keyboard(chat_id, date_str, idx)
             try:
                 await context.bot.send_message(chat_id=chat_id, text=section, reply_markup=keyboard)
             except Exception as e:
@@ -101,7 +101,7 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
             except Exception as e:
                 logger.error("Failed to send briefing part: %s", e)
                 return False
-        keyboard = make_section_keyboard(date_str, 0)
+        keyboard = make_section_keyboard(chat_id, date_str, 0)
         try:
             await context.bot.send_message(chat_id=chat_id, text=parts[-1], reply_markup=keyboard)
         except Exception as e:
@@ -109,7 +109,7 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
             return False
         cached_sections = parts
 
-    context.bot_data[f"briefing:{date_str}"] = {
+    context.bot_data[f"briefing:{chat_id}:{date_str}"] = {
         "content": briefing_text,
         "theme": theme,
         "sources": sources,

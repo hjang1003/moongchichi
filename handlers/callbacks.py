@@ -11,19 +11,20 @@ from services.briefing import make_section_keyboard
 logger = logging.getLogger(__name__)
 
 
-def _parse_cb(data: str) -> tuple[str, int]:
-    """Return (date_str, section_idx) from 'action:date_str' or 'action:date_str:idx'."""
-    parts = data.split(":", 2)
-    date_str = parts[1] if len(parts) > 1 else ""
-    section_idx = int(parts[2]) if len(parts) > 2 else 0
-    return date_str, section_idx
+def _parse_cb(data: str) -> tuple[str, str, int]:
+    """Return (chat_id, date_str, section_idx) from 'action:chat_id:date_str' or 'action:chat_id:date_str:idx'."""
+    parts = data.split(":", 3)
+    chat_id = parts[1] if len(parts) > 1 else ""
+    date_str = parts[2] if len(parts) > 2 else ""
+    section_idx = int(parts[3]) if len(parts) > 3 else 0
+    return chat_id, date_str, section_idx
 
 
 async def handle_notion_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    date_str, section_idx = _parse_cb(query.data)
+    chat_id, date_str, section_idx = _parse_cb(query.data)
 
-    briefing_data = context.bot_data.get(f"briefing:{date_str}")
+    briefing_data = context.bot_data.get(f"briefing:{chat_id}:{date_str}")
     if not briefing_data:
         briefing_data = await _load_briefing_data_from_sheets(date_str)
 
@@ -47,7 +48,7 @@ async def handle_notion_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     saved_page_ids = briefing_data.setdefault("saved_page_ids", {})
     saved_page_ids[str(section_idx)] = page_id
-    context.bot_data[f"briefing:{date_str}"] = briefing_data
+    context.bot_data[f"briefing:{chat_id}:{date_str}"] = briefing_data
 
     try:
         sheets = get_sheets()
@@ -55,7 +56,7 @@ async def handle_notion_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.error("Sheets update_notion_saved failed: %s", e)
 
-    await query.edit_message_reply_markup(reply_markup=make_section_keyboard(date_str, section_idx, saved=True))
+    await query.edit_message_reply_markup(reply_markup=make_section_keyboard(chat_id, date_str, section_idx, saved=True))
     await query.answer()
 
     prompt_msg = await context.bot.send_message(
@@ -74,9 +75,9 @@ async def handle_notion_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_notion_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    date_str, section_idx = _parse_cb(query.data)
+    chat_id, date_str, section_idx = _parse_cb(query.data)
 
-    briefing_data = context.bot_data.get(f"briefing:{date_str}", {})
+    briefing_data = context.bot_data.get(f"briefing:{chat_id}:{date_str}", {})
     saved_page_ids = briefing_data.get("saved_page_ids", {})
     page_id = saved_page_ids.get(str(section_idx))
 
@@ -92,19 +93,21 @@ async def handle_notion_delete(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     saved_page_ids.pop(str(section_idx), None)
-    context.bot_data[f"briefing:{date_str}"] = briefing_data
+    context.bot_data[f"briefing:{chat_id}:{date_str}"] = briefing_data
 
-    await query.edit_message_reply_markup(reply_markup=make_section_keyboard(date_str, section_idx, saved=False))
+    await query.edit_message_reply_markup(reply_markup=make_section_keyboard(chat_id, date_str, section_idx, saved=False))
     await query.answer("🗑️ 노션에서 삭제됐어요!", show_alert=True)
 
 
 async def handle_source_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    date_str = query.data.split(":", 2)[1]
+    parts = query.data.split(":", 2)
+    chat_id = parts[1] if len(parts) > 1 else ""
+    date_str = parts[2] if len(parts) > 2 else ""
 
     sources: list[str] = []
 
-    briefing_data = context.bot_data.get(f"briefing:{date_str}")
+    briefing_data = context.bot_data.get(f"briefing:{chat_id}:{date_str}")
     if briefing_data:
         sources = briefing_data.get("sources", [])
 
