@@ -51,7 +51,7 @@ def extract_sources(text: str) -> List[str]:
 
 
 async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) -> Optional[dict]:
-    """Call Claude API once. Generate briefing content + extract keywords + sources."""
+    """Call Claude API once. Generate briefing content + extract keywords/sources + classify pools."""
     sheets = get_sheets()
     claude = get_claude()
 
@@ -62,16 +62,19 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
         profile = {}
 
     try:
-        recent_sources = await sheets.get_recent_sources(weeks=4)
-        recent_keywords = await sheets.get_recent_keywords(weeks=4)
+        recent_sources = await sheets.get_recent_sources(weeks=8)
+        blocked = await sheets.get_blocked_keywords()
     except Exception as e:
         logger.error("Failed to load recent history from sheets: %s", e)
-        recent_sources, recent_keywords = [], []
+        recent_sources = []
+        blocked = {"strict": [], "medium": []}
 
     try:
         briefing_text = await claude.generate_briefing(
             profile, theme, date_str, weekday_ko,
-            recent_sources=recent_sources, recent_keywords=recent_keywords,
+            recent_sources=recent_sources,
+            blocked_keywords_strict=blocked.get("strict", []),
+            blocked_keywords_medium=blocked.get("medium", []),
         )
     except Exception as e:
         logger.error("Failed to generate briefing: %s", e)
@@ -86,11 +89,20 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
         logger.error("Keyword extraction failed: %s", e)
         keywords = []
 
+    # 컨텐트 섹션만 추출해서 영역 분류
+    content_sections = sections[1:-1] if len(sections) >= 3 else sections
+    try:
+        pools = await claude.classify_briefing_pools(content_sections)
+    except Exception as e:
+        logger.error("Pool classification failed: %s", e)
+        pools = ["T"] * len(content_sections)
+
     return {
         "briefing_text": briefing_text,
         "sections": sections,
         "sources": sources,
         "keywords": keywords,
+        "pools": pools,
         "theme": theme,
     }
 
@@ -173,7 +185,9 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
 
     try:
         await sheets.add_history(
-            date_str, theme, True, briefing_data["sources"], False, keywords=briefing_data["keywords"]
+            date_str, theme, True, briefing_data["sources"], False,
+            keywords=briefing_data["keywords"],
+            pools=briefing_data["pools"],
         )
     except Exception as e:
         logger.error("Sheets history save failed: %s", e)
@@ -228,7 +242,9 @@ async def create_and_send_briefing_to_many(
     if sent_count > 0:
         try:
             await sheets.add_history(
-                date_str, theme, True, briefing_data["sources"], False, keywords=briefing_data["keywords"]
+                date_str, theme, True, briefing_data["sources"], False,
+                keywords=briefing_data["keywords"],
+                pools=briefing_data["pools"],
             )
         except Exception as e:
             logger.error("Sheets history save failed: %s", e)

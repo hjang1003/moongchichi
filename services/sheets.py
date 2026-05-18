@@ -21,7 +21,7 @@ SETTINGS_TAB = "설정"
 PROFILE_TAB = "프로필"
 HISTORY_TAB = "브리핑이력"
 
-HISTORY_HEADERS = ["날짜", "요일테마", "발송여부", "소스링크", "노션저장여부", "주제키워드"]
+HISTORY_HEADERS = ["날짜", "요일테마", "발송여부", "소스링크", "노션저장여부", "주제키워드", "영역분류"]
 
 
 class SheetsService:
@@ -116,13 +116,24 @@ class SheetsService:
     def _sync_add_history(
         self, date_str: str, theme: str, sent: bool, sources: List[str], notion_saved: bool,
         keywords: Optional[List[str]] = None,
+        pools: Optional[List[str]] = None,
     ) -> None:
         ws = self._get_tab(HISTORY_TAB)
         existing = ws.get_all_values()
-        if not existing or existing[0] != HISTORY_HEADERS:
-            ws.insert_row(HISTORY_HEADERS, 1)
+        # 헤더가 다르면 보강
+        if not existing:
+            ws.append_row(HISTORY_HEADERS)
+        else:
+            current_headers = existing[0]
+            for i, expected in enumerate(HISTORY_HEADERS):
+                if i >= len(current_headers) or current_headers[i] != expected:
+                    ws.update_cell(1, i + 1, expected)
         keywords_str = "|".join(keywords) if keywords else ""
-        ws.append_row([date_str, theme, str(sent), "|".join(sources), str(notion_saved), keywords_str])
+        pools_str = "|".join(pools) if pools else ""
+        ws.append_row([
+            date_str, theme, str(sent), "|".join(sources),
+            str(notion_saved), keywords_str, pools_str,
+        ])
 
     def _sync_get_history(self, limit: int) -> List[Dict]:
         try:
@@ -188,6 +199,68 @@ class SheetsService:
                     keywords.extend(k.strip() for k in raw.split("|") if k.strip())
         return keywords
 
+    def _sync_get_blocked_keywords(self) -> Dict[str, List[str]]:
+        """Returns {'strict': [...], 'medium': [...]}.
+        strict: 최근 12주 누적 2회 이상 AND 마지막 등장일 56일(8주) 이내
+        medium: 누적 1회 AND 마지막 등장일 28일(4주) 이내
+        """
+        import datetime
+        from collections import defaultdict
+        try:
+            ws = self._get_tab(HISTORY_TAB)
+        except gspread.exceptions.WorksheetNotFound:
+            return {"strict": [], "medium": []}
+        now = datetime.datetime.now()
+        lookback_cutoff = (now - datetime.timedelta(weeks=12)).strftime("%Y-%m-%d")
+        keyword_dates = defaultdict(list)
+        for row in ws.get_all_records():
+            date_val = str(row.get("날짜", ""))
+            if date_val < lookback_cutoff:
+                continue
+            raw = str(row.get("주제키워드", ""))
+            if not raw:
+                continue
+            for kw in raw.split("|"):
+                kw = kw.strip()
+                if kw:
+                    keyword_dates[kw].append(date_val)
+        strict_list = []
+        medium_list = []
+        for kw, dates in keyword_dates.items():
+            latest_date = max(dates)
+            try:
+                latest_dt = datetime.datetime.strptime(latest_date, "%Y-%m-%d")
+                days_since = (now - latest_dt).days
+            except ValueError:
+                continue
+            count = len(dates)
+            if count >= 2 and days_since <= 56:
+                strict_list.append(kw)
+            elif count == 1 and days_since <= 28:
+                medium_list.append(kw)
+        return {"strict": strict_list, "medium": medium_list}
+
+    def _sync_get_pool_distribution(self, weeks: int) -> Dict[str, int]:
+        """Returns {'T': n, 'F': n, 'G': n} count for last `weeks` weeks."""
+        import datetime
+        try:
+            ws = self._get_tab(HISTORY_TAB)
+        except gspread.exceptions.WorksheetNotFound:
+            return {"T": 0, "F": 0, "G": 0}
+        cutoff = (datetime.datetime.now() - datetime.timedelta(weeks=weeks)).strftime("%Y-%m-%d")
+        counter = {"T": 0, "F": 0, "G": 0}
+        for row in ws.get_all_records():
+            if str(row.get("날짜", "")) < cutoff:
+                continue
+            raw = str(row.get("영역분류", ""))
+            if not raw:
+                continue
+            for tag in raw.split("|"):
+                tag = tag.strip().upper()
+                if tag in counter:
+                    counter[tag] += 1
+        return counter
+
     def _sync_get_saved_history_this_month(self, year: int, month: int) -> List[Dict]:
         try:
             ws = self._get_tab(HISTORY_TAB)
@@ -208,14 +281,21 @@ class SheetsService:
     async def add_history(
         self, date_str: str, theme: str, sent: bool, sources: List[str], notion_saved: bool,
         keywords: Optional[List[str]] = None,
+        pools: Optional[List[str]] = None,
     ) -> None:
-        await self._run(self._sync_add_history, date_str, theme, sent, sources, notion_saved, keywords)
+        await self._run(self._sync_add_history, date_str, theme, sent, sources, notion_saved, keywords, pools)
 
     async def get_recent_sources(self, weeks: int = 4) -> List[str]:
         return await self._run(self._sync_get_recent_sources, weeks)
 
     async def get_recent_keywords(self, weeks: int = 4) -> List[str]:
         return await self._run(self._sync_get_recent_keywords, weeks)
+
+    async def get_blocked_keywords(self) -> Dict[str, List[str]]:
+        return await self._run(self._sync_get_blocked_keywords)
+
+    async def get_pool_distribution(self, weeks: int = 4) -> Dict[str, int]:
+        return await self._run(self._sync_get_pool_distribution, weeks)
 
     async def get_history(self, limit: int = 10) -> List[Dict]:
         return await self._run(self._sync_get_history, limit)

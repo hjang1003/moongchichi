@@ -215,11 +215,47 @@ async def cmd_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("일시적인 오류가 발생했어요 😥 잠시 후 다시 시도해 주세요!")
 
 
+async def cmd_distribution(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_auth(update, context):
+        return
+    sheets = get_sheets()
+    try:
+        dist_4w = await sheets.get_pool_distribution(weeks=4)
+        dist_8w = await sheets.get_pool_distribution(weeks=8)
+    except Exception as e:
+        logger.error("Distribution fetch failed: %s", e)
+        await update.message.reply_text("일시적인 오류가 발생했어요 😥 잠시 후 다시 시도해 주세요!")
+        return
+
+    def format_dist(label, dist):
+        total = sum(dist.values())
+        if total == 0:
+            return f"{label}\n데이터 없음"
+        t_pct = round(dist.get("T", 0) / total * 100)
+        f_pct = round(dist.get("F", 0) / total * 100)
+        g_pct = round(dist.get("G", 0) / total * 100)
+        return (
+            f"{label}\n"
+            f"최신 트렌드: {t_pct}% ({dist.get('T', 0)}개)\n"
+            f"기본기·고전: {f_pct}% ({dist.get('F', 0)}개)\n"
+            f"인접·글로벌: {g_pct}% ({dist.get('G', 0)}개)"
+        )
+
+    text = (
+        "📊 콘텐츠 영역 분포\n\n"
+        f"{format_dist('▪ 최근 4주', dist_4w)}\n\n"
+        f"{format_dist('▪ 최근 8주', dist_8w)}\n\n"
+        "💡 목표 비율: 최신 트렌드 70% / 기본기·고전 20% / 인접·글로벌 10%"
+    )
+    await update.message.reply_text(text)
+
+
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "🐾 뭉치치 명령어 목록\n\n"
         "/alarm [시간] — 알람 시간 변경 (예: /alarm 09:00)\n"
         "/briefing — 지금 즉시 브리핑\n"
+        "/distribution — 최근 4주·8주의 콘텐츠 영역 분포(트렌드/기본기/글로벌) 비율 확인\n"
         "/feedback [내용] — 개발자에게 전달\n"
         "/pause — 브리핑 일시 중단\n"
         "/profile — 프로필 및 설정 전체 보기\n"

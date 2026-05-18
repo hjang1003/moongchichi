@@ -20,7 +20,8 @@ class ClaudeService:
         date_str: str,
         weekday_ko: str,
         recent_sources: Optional[List[str]] = None,
-        recent_keywords: Optional[List[str]] = None,
+        blocked_keywords_strict: Optional[List[str]] = None,
+        blocked_keywords_medium: Optional[List[str]] = None,
     ) -> str:
         industry_ratio = profile.get("관심업종비율", "60")
         adjacent_ratio = profile.get("인접산업비율", "30")
@@ -38,18 +39,58 @@ class ClaudeService:
             "각 항목 말미에는 출처 기관명만 간략히 표기합니다: 📌 출처: 기관명/미디어명\n"
             "실제 URL은 마지막 '📎 참고 출처 전체 목록' 섹션에만 포함합니다. 형식: - 기관명 — https://실제URL\n"
             "공신력 있는 소스(Nielsen, Meta, Google, 대형 광고대행사, 주요 마케팅 미디어) 우선 사용.\n"
-            "반드시 실존하는 페이지의 실제 URL을 작성하고, 가상의 URL은 절대 사용하지 마세요."
+            "반드시 실존하는 페이지의 실제 URL을 작성하고, 가상의 URL은 절대 사용하지 마세요.\n"
+            "\n"
+            "[콘텐츠 영역 — 항목 3개를 아래 세 영역에서 선택해 작성]\n"
+            "\n"
+            "영역 A: 최신 마케팅 트렌드 (우선순위 1, 비중 약 70%)\n"
+            "- 최근 마케팅 동향, 캠페인 사례, 데이터 리포트, 플랫폼 변화 등 최신 정보\n"
+            "- 단, 아래 [절대 금지 키워드]에 포함된 것은 절대 다루지 마라\n"
+            "\n"
+            "영역 B: 마케팅 기본기·고전 사례 (우선순위 2, 비중 약 20%)\n"
+            "- 마케팅 프레임워크 (4P, STP, AARRR, AIDA, RACE, SWOT, 5 Forces 등)\n"
+            "- 고전 캠페인 사례 (애플 1984, 나이키 Just Do It, 도브 Real Beauty, 코카콜라 Share a Coke 등)\n"
+            "- 마케팅 학자·이론 (필립 코틀러, 세스 고딘, 잭 트라우트 등의 핵심 개념)\n"
+            "- 소비자 행동·브랜딩·포지셔닝 이론\n"
+            "- 신입 취준생의 면접·포트폴리오 준비에 유용한 기초 콘텐츠\n"
+            "\n"
+            "영역 C: 인접 산업·글로벌 사례 (우선순위 3, 비중 약 10%)\n"
+            "- 관심 업종 외 인접 산업 마케팅 사례\n"
+            "- 글로벌 마케팅 동향 (북미, 유럽, 동남아, 일본 등)\n"
+            "\n"
+            "[비율 목표 및 우선순위]\n"
+            "- 기본 비율: 영역 A 약 70% / 영역 B 약 20% / 영역 C 약 10%\n"
+            "- 영역 A 우선. 차단 키워드 회피하느라 부족하면 영역 B, C 비중 늘려도 됨\n"
+            "- 단, 영역 A 비중을 0으로 만들지 마라. 최소 1개 항목은 영역 A에서 가져와라\n"
+            "- 영역 B, C에서도 차단 키워드는 동일하게 적용된다\n"
+            "\n"
+            "[필수 행동 규칙]\n"
+            "1. 항상 3개 항목 작성. '오늘 적합한 콘텐츠를 찾지 못했어요' 같은 메시지는 절대 출력하지 마라. 영역 B와 C가 항상 충분한 풀이므로 콘텐츠 부족은 발생할 수 없다.\n"
+            "2. 차단 키워드 위반 절대 금지. 위반 시 답변 전체가 거부된다.\n"
+            "3. 모든 항목은 마케팅 분야와 명확하게 연관성 있을 것."
         )
+
+        if blocked_keywords_strict:
+            system_prompt += (
+                "\n\n[절대 금지 키워드 — 빨간 리스트]\n"
+                "아래 키워드들은 최근 8주 내 2회 이상 등장한 핫키워드입니다. 절대 다루지 마라. "
+                "위반 시 답변 전체가 거부된다:\n"
+                + "\n".join(f"- {kw}" for kw in blocked_keywords_strict)
+            )
+
+        if blocked_keywords_medium:
+            system_prompt += (
+                "\n\n[절대 금지 키워드 — 노란 리스트]\n"
+                "아래 키워드들은 최근 4주 내 1회 등장한 키워드입니다. 절대 다루지 마라. "
+                "위반 시 답변 전체가 거부된다:\n"
+                + "\n".join(f"- {kw}" for kw in blocked_keywords_medium)
+            )
 
         if recent_sources:
             system_prompt += (
-                "\n\n아래 URL들은 최근 4주 내 이미 사용한 출처야. 절대 동일한 URL을 다시 사용하지 마:\n"
+                "\n\n[중복 출처 금지]\n"
+                "아래 URL들은 최근 8주 내 이미 사용한 출처입니다. 절대 동일한 URL을 다시 사용하지 마라:\n"
                 + "\n".join(f"- {url}" for url in recent_sources)
-            )
-        if recent_keywords:
-            system_prompt += (
-                "\n\n아래는 최근 4주 내 다룬 주제 키워드야. 동일하거나 80% 이상 겹치는 내용은 다루지 마:\n"
-                + "\n".join(f"- {kw}" for kw in recent_keywords)
             )
 
         additional_requests = profile.get("추가요청사항", "")
@@ -257,6 +298,39 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
         )
         raw = message.content[0].text.strip()
         return [k.strip() for k in raw.split(",") if k.strip()]
+
+    async def classify_briefing_pools(self, sections: List[str]) -> List[str]:
+        """Classify each section into T/F/G. Returns list of strings same length as sections."""
+        if not sections:
+            return []
+        sections_text = "\n\n---\n\n".join(
+            f"[항목 {i+1}]\n{s[:500]}" for i, s in enumerate(sections)
+        )
+        prompt = (
+            "아래 마케팅 브리핑 각 항목을 세 영역 중 하나로 분류하세요.\n\n"
+            "T = 최신 트렌드 (최근 마케팅 동향, 캠페인 사례, 데이터 리포트, 플랫폼 변화 등)\n"
+            "F = 마케팅 기본기·고전 (4P/STP/AARRR 프레임워크, 고전 캠페인, 학자·이론)\n"
+            "G = 인접·글로벌 (관심 업종 외 인접 산업, 해외 시장 사례)\n\n"
+            "각 항목을 T/F/G 한 글자로만 분류해서, 순서대로 쉼표로 구분해 답하세요.\n"
+            "예시 답변: T,F,T\n\n"
+            f"항목 수: {len(sections)}개\n\n"
+            f"브리핑 항목들:\n{sections_text}\n\n"
+            "분류 (한 줄, 설명 없음):"
+        )
+        try:
+            message = await self._client.messages.create(
+                model=config.CLAUDE_FAST_MODEL,
+                max_tokens=30,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = message.content[0].text.strip()
+            parsed = [p.strip().upper() for p in raw.split(",") if p.strip()]
+            parsed = [p for p in parsed if p in ("T", "F", "G")]
+            while len(parsed) < len(sections):
+                parsed.append("T")
+            return parsed[:len(sections)]
+        except Exception:
+            return ["T"] * len(sections)
 
     async def is_marketing_topic(self, topic: str) -> bool:
         prompt = f'"{topic}"은 마케팅 관련 주제입니까? 예/아니오로만 답하세요.'

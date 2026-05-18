@@ -17,6 +17,7 @@ from handlers.admin import cmd_reset
 from handlers.general import (
     cmd_pause, cmd_resume, cmd_alarm,
     cmd_profile, cmd_update, cmd_request, cmd_feedback, cmd_help,
+    cmd_distribution,
     handle_natural_language,
 )
 from handlers.callbacks import handle_notion_save, handle_notion_delete, handle_source_view
@@ -79,6 +80,7 @@ def main() -> None:
     app.add_handler(CommandHandler("update", cmd_update))
     app.add_handler(CommandHandler("request", cmd_request))
     app.add_handler(CommandHandler("feedback", cmd_feedback))
+    app.add_handler(CommandHandler("distribution", cmd_distribution))
     app.add_handler(CommandHandler("help", cmd_help))
 
     # Inline button callbacks
