@@ -217,11 +217,20 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "온보딩완료": "true",
             "온보딩날짜": utils.date_to_str(now),
         }
-        await sheets.set_profile_bulk(profile_data)
-        # 관리자가 테스트로 온보딩을 진행하더라도 사용자_ChatID를 덮어쓰지 않음
-        if not await sheets.is_admin(chat_id):
+
+        # 관리자가 테스트로 온보딩 완료하더라도 실제 프로필·설정 데이터는 변경하지 않음
+        is_admin = await sheets.is_admin(chat_id)
+        if not is_admin:
+            await sheets.set_profile_bulk(profile_data)
             await sheets.set_setting("사용자_ChatID", str(chat_id))
-        await sheets.set_setting("마지막_업데이트", utils.date_to_str(now))
+            await sheets.set_setting("마지막_업데이트", utils.date_to_str(now))
+        else:
+            await update.message.reply_text(
+                "⚠️ 관리자 테스트 모드\n\n"
+                "온보딩 흐름이 정상 작동했지만, 사용자 프로필과 ChatID는 변경되지 않았어요. "
+                "실제 데이터는 그대로 유지됩니다.\n\n"
+                "아래로 본 사용자가 받게 될 안내 메시지를 보여드릴게요 👇"
+            )
 
         msg1 = (
             "🐾 뭉치치 사용 안내\n\n"

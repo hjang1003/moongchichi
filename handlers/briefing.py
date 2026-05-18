@@ -8,7 +8,7 @@ from handlers.auth import require_auth
 from services.sheets import get_sheets
 from services.notion import get_notion
 from services.claude import get_claude
-from services.briefing import create_and_send_briefing
+from services.briefing import create_and_send_briefing, parse_briefing_sections, extract_sources
 import utils
 import config
 
@@ -130,6 +130,39 @@ async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     parts = utils.split_message(briefing)
     for part in parts:
         await update.message.reply_text(part)
+
+    # /topic으로 받은 브리핑도 이력에 저장 → 정기 브리핑이 같은 토픽 회피하도록
+    try:
+        now = utils.get_korea_now()
+        date_str = utils.date_to_str(now)
+        sources = extract_sources(briefing)
+        sections = parse_briefing_sections(briefing)
+        content_sections = sections[1:-1] if len(sections) >= 3 else sections
+
+        try:
+            keywords = await claude.extract_keywords(briefing)
+        except Exception as e:
+            logger.error("Topic briefing keyword extraction failed: %s", e)
+            keywords = []
+
+        try:
+            pools = await claude.classify_briefing_pools(content_sections)
+        except Exception as e:
+            logger.error("Topic briefing pool classification failed: %s", e)
+            pools = ["T"] * len(content_sections)
+
+        await sheets.add_history(
+            date_str,
+            f"/topic: {topic}",
+            True,
+            sources,
+            False,
+            keywords=keywords,
+            pools=pools,
+        )
+    except Exception as e:
+        logger.error("Failed to save /topic history: %s", e)
+        # 발송은 이미 성공했으니 사용자에겐 알리지 않음
 
 
 async def cmd_term(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
