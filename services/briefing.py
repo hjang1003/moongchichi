@@ -1,7 +1,8 @@
 from __future__ import annotations
+
 import logging
 import re
-from typing import List
+from typing import List, Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -26,24 +27,33 @@ def make_section_keyboard(chat_id: int, date_str: str, section_idx: int, saved: 
 
 
 def parse_briefing_sections(text: str) -> List[str]:
-    """Split briefing on ━━━ separator lines; return non-empty chunks."""
     parts = SECTION_SEP_RE.split(text)
     return [p.strip() for p in parts if p.strip()]
 
 
-async def create_and_send_briefing(context, chat_id: int) -> bool:
-    """Generate briefing and send per-section to chat_id. Returns True on success."""
+def extract_sources(text: str) -> List[str]:
+    lines = text.split("\n")
+    sources = []
+    in_source_section = False
+    for line in lines:
+        line = line.strip()
+        if "참고 출처" in line:
+            in_source_section = True
+            continue
+        if in_source_section:
+            if line.startswith("※") or (line.startswith("━") and len(line) > 5):
+                break
+            if line and not line.startswith("━") and not line.startswith("─"):
+                cleaned = line.lstrip("•-– ").strip()
+                if cleaned:
+                    sources.append(cleaned)
+    return sources
+
+
+async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) -> Optional[dict]:
+    """Call Claude API once. Generate briefing content + extract keywords + sources."""
     sheets = get_sheets()
     claude = get_claude()
-
-    now = utils.get_korea_now()
-    date_str = utils.date_to_str(now)
-    weekday_ko = config.WEEKDAY_KO.get(now.weekday(), "")
-    theme = utils.get_weekday_theme(now)
-
-    if not theme:
-        logger.info("Today (%s) is not a weekday, skipping briefing.", date_str)
-        return False
 
     try:
         profile = await sheets.get_profile()
@@ -65,57 +75,10 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
         )
     except Exception as e:
         logger.error("Failed to generate briefing: %s", e)
-        return False
+        return None
 
     sources = extract_sources(briefing_text)
     sections = parse_briefing_sections(briefing_text)
-
-    # Structure: [header, item1, item2, item3, footer]
-    # Content sections are everything between the first and last chunk.
-    if len(sections) >= 3:
-        header = sections[0]
-        footer = sections[-1]
-        content_sections = sections[1:-1]
-
-        try:
-            await context.bot.send_message(chat_id=chat_id, text=header)
-        except Exception as e:
-            logger.error("Failed to send briefing header: %s", e)
-            return False
-
-        for idx, section in enumerate(content_sections):
-            keyboard = make_section_keyboard(chat_id, date_str, idx)
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=section, reply_markup=keyboard)
-            except Exception as e:
-                logger.error("Failed to send briefing section %d: %s", idx, e)
-                return False
-
-        cached_sections = content_sections
-    else:
-        # Fallback: send as split messages with one button on the last part
-        parts = utils.split_message(briefing_text)
-        for part in parts[:-1]:
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=part)
-            except Exception as e:
-                logger.error("Failed to send briefing part: %s", e)
-                return False
-        keyboard = make_section_keyboard(chat_id, date_str, 0)
-        try:
-            await context.bot.send_message(chat_id=chat_id, text=parts[-1], reply_markup=keyboard)
-        except Exception as e:
-            logger.error("Failed to send final briefing part: %s", e)
-            return False
-        cached_sections = parts
-
-    context.bot_data[f"briefing:{chat_id}:{date_str}"] = {
-        "content": briefing_text,
-        "theme": theme,
-        "sources": sources,
-        "sections": cached_sections,
-        "saved_page_ids": {},
-    }
 
     try:
         keywords = await claude.extract_keywords(briefing_text)
@@ -123,28 +86,151 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
         logger.error("Keyword extraction failed: %s", e)
         keywords = []
 
+    return {
+        "briefing_text": briefing_text,
+        "sections": sections,
+        "sources": sources,
+        "keywords": keywords,
+        "theme": theme,
+    }
+
+
+async def _send_briefing_to_chat(context, chat_id: int, date_str: str, briefing_data: dict, include_buttons: bool = True) -> bool:
+    """Send pre-generated briefing to one chat. If include_buttons=False, send plain text."""
+    sections = briefing_data["sections"]
+    briefing_text = briefing_data["briefing_text"]
+    sources = briefing_data["sources"]
+    theme = briefing_data.get("theme", "")
+
+    if len(sections) >= 3:
+        header = sections[0]
+        content_sections = sections[1:-1]
+
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=header)
+        except Exception as e:
+            logger.error("Failed to send briefing header to %s: %s", chat_id, e)
+            return False
+
+        for idx, section in enumerate(content_sections):
+            reply_markup = make_section_keyboard(chat_id, date_str, idx) if include_buttons else None
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=section, reply_markup=reply_markup)
+            except Exception as e:
+                logger.error("Failed to send briefing section %d to %s: %s", idx, chat_id, e)
+                return False
+
+        cached_sections = content_sections
+    else:
+        parts = utils.split_message(briefing_text)
+        for part in parts[:-1]:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=part)
+            except Exception as e:
+                logger.error("Failed to send briefing part to %s: %s", chat_id, e)
+                return False
+
+        reply_markup = make_section_keyboard(chat_id, date_str, 0) if include_buttons else None
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=parts[-1], reply_markup=reply_markup)
+        except Exception as e:
+            logger.error("Failed to send final briefing part to %s: %s", chat_id, e)
+            return False
+
+        cached_sections = parts
+
+    if include_buttons:
+        context.bot_data[f"briefing:{chat_id}:{date_str}"] = {
+            "content": briefing_text,
+            "theme": theme,
+            "sources": sources,
+            "sections": cached_sections,
+            "saved_page_ids": {},
+        }
+
+    return True
+
+
+async def create_and_send_briefing(context, chat_id: int) -> bool:
+    """For /briefing command: generate + send to one chat + save history once."""
+    sheets = get_sheets()
+    now = utils.get_korea_now()
+    date_str = utils.date_to_str(now)
+    weekday_ko = config.WEEKDAY_KO.get(now.weekday(), "")
+    theme = utils.get_weekday_theme(now)
+
+    if not theme:
+        logger.info("Today (%s) is not a weekday, skipping briefing.", date_str)
+        return False
+
+    briefing_data = await _generate_briefing_data(date_str, theme, weekday_ko)
+    if not briefing_data:
+        return False
+
+    success = await _send_briefing_to_chat(context, chat_id, date_str, briefing_data, include_buttons=True)
+    if not success:
+        return False
+
     try:
-        await sheets.add_history(date_str, theme, True, sources, False, keywords=keywords)
+        await sheets.add_history(
+            date_str, theme, True, briefing_data["sources"], False, keywords=briefing_data["keywords"]
+        )
     except Exception as e:
         logger.error("Sheets history save failed: %s", e)
 
     return True
 
 
-def extract_sources(text: str) -> List[str]:
-    lines = text.split("\n")
-    sources = []
-    in_source_section = False
-    for line in lines:
-        line = line.strip()
-        if "참고 출처" in line:
-            in_source_section = True
+async def create_and_send_briefing_to_many(
+    context,
+    primary_chat_id: Optional[int],
+    mirror_chat_ids: Optional[List[int]] = None,
+) -> bool:
+    """For scheduled daily briefing: generate ONCE, send to primary (with buttons) and mirrors (no buttons), save history ONCE."""
+    if mirror_chat_ids is None:
+        mirror_chat_ids = []
+
+    sheets = get_sheets()
+    now = utils.get_korea_now()
+    date_str = utils.date_to_str(now)
+    weekday_ko = config.WEEKDAY_KO.get(now.weekday(), "")
+    theme = utils.get_weekday_theme(now)
+
+    if not theme:
+        logger.info("Today (%s) is not a weekday, skipping briefing.", date_str)
+        return False
+
+    briefing_data = await _generate_briefing_data(date_str, theme, weekday_ko)
+    if not briefing_data:
+        return False
+
+    sent_count = 0
+
+    if primary_chat_id:
+        ok = await _send_briefing_to_chat(
+            context, primary_chat_id, date_str, briefing_data, include_buttons=True
+        )
+        if ok:
+            sent_count += 1
+
+    for chat_id in mirror_chat_ids:
+        if not chat_id or chat_id == primary_chat_id:
             continue
-        if in_source_section:
-            if line.startswith("※") or (line.startswith("━") and len(line) > 5):
-                break
-            if line and not line.startswith("━") and not line.startswith("─"):
-                cleaned = line.lstrip("•-– ").strip()
-                if cleaned:
-                    sources.append(cleaned)
-    return sources
+        try:
+            ok = await _send_briefing_to_chat(
+                context, chat_id, date_str, briefing_data, include_buttons=False
+            )
+            if ok:
+                sent_count += 1
+        except Exception as e:
+            logger.error("Failed to send mirror briefing to %s: %s", chat_id, e)
+
+    if sent_count > 0:
+        try:
+            await sheets.add_history(
+                date_str, theme, True, briefing_data["sources"], False, keywords=briefing_data["keywords"]
+            )
+        except Exception as e:
+            logger.error("Sheets history save failed: %s", e)
+
+    return sent_count > 0

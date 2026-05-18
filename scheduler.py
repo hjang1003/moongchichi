@@ -17,7 +17,6 @@ WEEKDAYS = (0, 1, 2, 3, 4)
 
 async def _send_daily_briefing(context) -> None:
     now = utils.get_korea_now()
-
     if now.weekday() not in WEEKDAYS:
         return
 
@@ -38,14 +37,35 @@ async def _send_daily_briefing(context) -> None:
 
     user_id = await sheets.get_setting("사용자_ChatID")
     admin_id = await sheets.get_setting("관리자_ChatID")
-    targets = [uid for uid in [user_id, admin_id] if uid]
 
-    for uid in targets:
+    primary = None
+    mirrors = []
+    if user_id and str(user_id).strip():
         try:
-            await create_and_send_briefing(context, int(uid))
-            logger.info("Daily briefing sent to %s", uid)
-        except Exception as e:
-            logger.error("Failed to send daily briefing to %s: %s", uid, e)
+            primary = int(str(user_id).strip())
+        except ValueError:
+            logger.warning("Invalid 사용자_ChatID: %s", user_id)
+
+    if admin_id and str(admin_id).strip():
+        try:
+            admin_int = int(str(admin_id).strip())
+            if primary is None:
+                primary = admin_int
+            elif admin_int != primary:
+                mirrors.append(admin_int)
+        except ValueError:
+            logger.warning("Invalid 관리자_ChatID: %s", admin_id)
+
+    if primary is None:
+        logger.warning("No targets configured for daily briefing.")
+        return
+
+    try:
+        from services.briefing import create_and_send_briefing_to_many
+        await create_and_send_briefing_to_many(context, primary, mirrors)
+        logger.info("Daily briefing sent (primary=%s, mirrors=%s)", primary, mirrors)
+    except Exception as e:
+        logger.error("Failed to send daily briefing: %s", e)
 
 
 async def _check_monthly_summary(context) -> None:
