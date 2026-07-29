@@ -20,6 +20,8 @@ URL_RE = re.compile(r"https?://[^\s<>\"'()\[\]]+")
 LIST_MARKER_RE = re.compile(r"^[\s•\-–—*]*(?:\d+[.)]\s*)?")
 _URL_TRAILING_PUNCT = ".,;:!?)]}>\"'…、。」』"
 TRAILING_SEP_RE = re.compile(r"[\s—–\-|]+$")
+# 항목 말미의 "📌 출처: 기관명" 줄. 마지막 "📎 참고 출처 전체 목록" 헤더와는 구분된다
+ITEM_SOURCE_RE = re.compile(r"출처\s*[:：]")
 
 # 최초 1회 + 재생성 2회
 MAX_BRIEFING_ATTEMPTS = 3
@@ -91,6 +93,37 @@ def strip_source_block(section: str) -> str:
     return section
 
 
+def check_item_sources(text: str, sources: List[str]) -> Optional[str]:
+    """항목마다 출처가 붙어 있는지 검사한다. 문제가 있으면 사유, 없으면 None.
+
+    검사 항목
+      1) 각 항목 섹션에 '출처:' 줄이 있는지
+      2) 참고 출처 목록의 URL 개수가 항목 수 이상인지
+
+    기관명과 URL을 직접 연결하는 검사는 넣지 않았다. 검색 결과에서 뽑아둔 것은 URL뿐이고,
+    '매일경제 → mk.co.kr'처럼 한국 매체명은 도메인과 문자열이 겹치지 않아 오탐이 난다.
+    오탐은 곧 발송 실패이므로 지시받은 최소 조건(1, 2)만 강제한다.
+    """
+    sections = parse_briefing_sections(text)
+    if len(sections) < 3:
+        # 형식이 예상과 다르면 판정하지 않고 전체 URL 검증에 맡긴다
+        return None
+
+    items = [strip_source_block(s) for s in sections[1:-1]]
+    items = [s for s in items if s.strip()]
+    if not items:
+        return "항목 섹션이 없음"
+
+    missing = [i + 1 for i, s in enumerate(items) if not ITEM_SOURCE_RE.search(s)]
+    if missing:
+        return f"출처 줄이 없는 항목 {missing}"
+
+    if len(sources) < len(items):
+        return f"검증된 URL {len(sources)}개 < 항목 {len(items)}개"
+
+    return None
+
+
 def _url_keys(url: str) -> set:
     """URL 비교용 키. 꼬리 문장부호·앵커·마지막 슬래시를 떼고, 쿼리 유무 둘 다 허용한다."""
     u = url.strip().rstrip(_URL_TRAILING_PUNCT)
@@ -148,6 +181,7 @@ async def generate_with_search_verification(
     *,
     label: str,
     max_attempts: int = MAX_BRIEFING_ATTEMPTS,
+    require_item_sources: bool = False,
 ) -> Optional[VerifiedBriefing]:
     """웹검색 근거가 확인될 때까지 재생성하는 공통 루프.
 
@@ -204,6 +238,15 @@ async def generate_with_search_verification(
             )
             continue
 
+        if require_item_sources:
+            problem = check_item_sources(cleaned_text, sources)
+            if problem:
+                logger.warning(
+                    "%s: 항목별 출처 검사 실패 — %s (시도 %d/%d) — 폐기 후 재생성",
+                    label, problem, attempt, max_attempts,
+                )
+                continue
+
         logger.info(
             "%s 검증 통과 (시도 %d/%d) — 웹검색 %d회, 검증된 출처 %d개",
             label, attempt, max_attempts, result.search_uses, len(sources),
@@ -247,6 +290,7 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
             max_uses=3,
         ),
         label="정기 브리핑",
+        require_item_sources=True,
     )
     if verified is None:
         logger.error("정기 브리핑 발송하지 않음 (검증 실패)")
