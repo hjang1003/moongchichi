@@ -1,12 +1,59 @@
 from __future__ import annotations
 import logging
-from typing import Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Dict, Iterator, List, Optional
 
 import anthropic
 
 import config
 
 logger = logging.getLogger(__name__)
+
+
+# Anthropic 서버 사이드 웹 검색 도구.
+# claude-sonnet-5는 동적 필터링이 포함된 _20260209 버전을 지원한다.
+# (구버전 web_search_20250305는 Opus 4.6 / Sonnet 4.6 이전 모델용)
+# 동적 필터링이 내부적으로 코드 실행을 쓰므로 code_execution을 따로 선언하면 안 된다.
+WEB_SEARCH_TOOL_TYPE = "web_search_20260209"
+
+
+def _web_search_tool(max_uses: int) -> Dict:
+    return {
+        "type": WEB_SEARCH_TOOL_TYPE,
+        "name": "web_search",
+        "max_uses": max_uses,
+    }
+
+
+# 검색으로 확인되지 않은 내용을 지어내지 못하게 막는 공통 규칙.
+# system / user 프롬프트 양쪽에 넣는다.
+SEARCH_GROUNDING_RULES = (
+    "[검색 기반 작성 규칙 — 위반 시 답변 전체가 거부된다]\n"
+    "1. 반드시 web_search 도구로 검색해서 확인한 내용만 작성하라. "
+    "검색하지 않고 기억에 의존해 작성하는 것은 절대 금지다. 먼저 검색하고, 그 다음에 작성하라.\n"
+    "2. 검색으로 확인하지 못한 수치는 절대 쓰지 마라. "
+    "배수, 퍼센트, 증감률, 금액, 순위, 점유율, 사용자 수 전부 해당된다. "
+    "확인하지 못했으면 수치를 빼고 문장을 서술하라. 어림값이나 '약 ~배' 같은 표현으로 얼버무리는 것도 금지다.\n"
+    "3. 출처는 검색으로 실제 확인한 페이지만 적어라. "
+    "기억이나 추측으로 기관명·미디어명을 적는 것은 금지다. "
+    "참고 출처 목록에는 검색 결과에 실제로 등장한 URL만 그대로 옮겨 적어라. URL을 임의로 만들거나 변형하지 마라.\n"
+    "4. 캠페인명, 브랜드명, 인물명, 이론 창시자는 검색으로 확인한 것만 언급하라. "
+    "확인되지 않은 이름은 아예 쓰지 마라.\n"
+    "5. 마케팅 프레임워크나 고전 이론을 다룰 때도 창시자와 발표 연도를 반드시 검색으로 확인하라. "
+    "확인하지 못했다면 창시자와 연도를 쓰지 말고 개념만 서술하라.\n"
+    "6. 확인된 정보가 부족하면 해당 항목을 짧게 쓰거나 다른 소재로 바꿔라. "
+    "지어내서 분량을 채우는 것은 절대 금지다. 분량보다 사실 정확성이 항상 우선이다.\n"
+)
+
+
+@dataclass
+class BriefingResult:
+    """브리핑 본문 + 검증에 쓸 메타데이터."""
+
+    text: str
+    search_uses: int = 0
+    stop_reason: Optional[str] = None
+    searched_urls: List[str] = field(default_factory=list)
 
 
 def _extract_text(message) -> str:
@@ -17,6 +64,53 @@ def _extract_text(message) -> str:
         if getattr(block, "type", None) == "text"
     ]
     return "".join(parts)
+
+
+def _iter_search_result_blocks(message) -> Iterator[object]:
+    for block in (getattr(message, "content", None) or []):
+        if getattr(block, "type", None) == "web_search_tool_result":
+            yield block
+
+
+def _search_result_items(block) -> Optional[List]:
+    """성공한 검색 결과 리스트를 돌려준다. 에러 블록이면 None.
+
+    web_search_tool_result의 content는 성공 시 결과 리스트, 실패 시 error_code를 가진
+    객체 하나다. 이 차이로 실제 검색 성공 여부를 판별한다.
+    """
+    content = getattr(block, "content", None)
+    return content if isinstance(content, list) else None
+
+
+def _count_search_uses(message) -> int:
+    """웹 검색이 실제로 실행되어 결과가 돌아온 횟수. 에러로 끝난 검색은 세지 않는다."""
+    return sum(1 for b in _iter_search_result_blocks(message) if _search_result_items(b))
+
+
+def _extract_searched_urls(message) -> List[str]:
+    """검색 결과 블록에 실제로 등장한 URL 목록 (순서 유지, 중복 제거)."""
+    urls: List[str] = []
+    seen = set()
+    for block in _iter_search_result_blocks(message):
+        items = _search_result_items(block)
+        if not items:
+            continue
+        for item in items:
+            url = getattr(item, "url", None)
+            if url is None and isinstance(item, dict):
+                url = item.get("url")
+            if url and url not in seen:
+                seen.add(url)
+                urls.append(url)
+    return urls
+
+
+def _trim_preamble(text: str, marker: str) -> str:
+    """검색 도중 나온 서두 텍스트를 잘라낸다. marker가 없으면 원문 그대로 둔다."""
+    idx = text.find(marker)
+    if idx <= 0:
+        return text
+    return text[idx:]
 
 
 class ClaudeService:
@@ -32,7 +126,8 @@ class ClaudeService:
         recent_sources: Optional[List[str]] = None,
         blocked_keywords_strict: Optional[List[str]] = None,
         blocked_keywords_medium: Optional[List[str]] = None,
-    ) -> str:
+        max_uses: int = 6,
+    ) -> BriefingResult:
         industry_ratio = profile.get("관심업종비율", "60")
         adjacent_ratio = profile.get("인접산업비율", "30")
         trend_ratio = profile.get("전체트렌드비율", "10")
@@ -49,7 +144,8 @@ class ClaudeService:
             "각 항목 말미에는 출처 기관명만 간략히 표기합니다: 📌 출처: 기관명/미디어명\n"
             "실제 URL은 마지막 '📎 참고 출처 전체 목록' 섹션에만 포함합니다. 형식: - 기관명 — https://실제URL\n"
             "공신력 있는 소스(Nielsen, Meta, Google, 대형 광고대행사, 주요 마케팅 미디어) 우선 사용.\n"
-            "반드시 실존하는 페이지의 실제 URL을 작성하고, 가상의 URL은 절대 사용하지 마세요.\n"
+            "\n"
+            + SEARCH_GROUNDING_RULES +
             "\n"
             "[콘텐츠 영역 — 항목 3개를 아래 세 영역에서 선택해 작성]\n"
             "\n"
@@ -108,6 +204,9 @@ class ClaudeService:
 
         user_prompt = f"""오늘은 {date_str} ({weekday_ko})이며, 오늘의 브리핑 테마는 "{theme}"입니다.
 
+작성을 시작하기 전에 web_search 도구로 먼저 검색하세요. 검색 없이 바로 작성하지 마세요.
+
+{SEARCH_GROUNDING_RULES}
 사용자 프로필:
 - 목표 직무: {profile.get("목표직무", "마케터")}
 - 경력 수준: {profile.get("경력수준", "신입")}
@@ -136,8 +235,9 @@ class ClaudeService:
    - 빈 줄
    - [출처: 기관명/미디어명]
 3. 국내 + 글로벌 소스 균형 있게 사용
-4. 전체 분량: 3000자 내외
+4. 전체 분량: 3000자 내외. 단, 검색으로 확인된 내용이 부족하면 분량을 줄여라. 분량을 채우려고 지어내지 마라
 5. ** ** 마크다운 굵게 표시 절대 금지
+6. 각 항목의 [출처: 기관명]과 마지막 참고 출처 목록은 web_search 결과에 실제로 나온 페이지만 사용할 것
 
 ━━━━━━━ 출력 형식 ━━━━━━━
 
@@ -172,20 +272,27 @@ class ClaudeService:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📎 참고 출처 전체 목록
-- 기관명 — https://실제URL
-- 기관명 — https://실제URL
-- 기관명 — https://실제URL
+- 기관명 — https://검색결과에_실제로_나온_URL
+- 기관명 — https://검색결과에_실제로_나온_URL
+- 기관명 — https://검색결과에_실제로_나온_URL
+(각 줄에 반드시 http로 시작하는 실제 URL을 하나씩 포함할 것. URL 없는 줄은 쓰지 마세요.)
 
 ※ 위 정보는 AI 학습 데이터 기반으로 수집된 내용으로, 실제 최신 수치와 다를 수 있습니다."""
 
         message = await self._client.messages.create(
             model=config.CLAUDE_MAIN_MODEL,
-            max_tokens=8192,
+            max_tokens=12000,
             system=system_prompt,
             thinking={"type": "disabled"},
+            tools=[_web_search_tool(max_uses=max_uses)],
             messages=[{"role": "user", "content": user_prompt}],
         )
-        return _extract_text(message)
+        return BriefingResult(
+            text=_trim_preamble(_extract_text(message), "📅"),
+            search_uses=_count_search_uses(message),
+            stop_reason=getattr(message, "stop_reason", None),
+            searched_urls=_extract_searched_urls(message),
+        )
 
     async def parse_onboarding_answers(self, answers: Dict[str, str]) -> Dict[str, str]:
         prompt = f"""사용자가 마케팅 봇 온보딩에서 아래와 같이 답변했습니다.
@@ -247,11 +354,23 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
         )
         return _extract_text(message)
 
-    async def generate_topic_briefing(self, topic: str, profile: Dict[str, str]) -> str:
+    async def generate_topic_briefing(
+        self, topic: str, profile: Dict[str, str], max_uses: int = 4
+    ) -> BriefingResult:
         career = profile.get("경력수준", "신입")
+        system_prompt = (
+            "당신은 마케팅 주제 브리핑 작성 AI입니다.\n"
+            "부드럽고 친근한 존댓말로 작성합니다.\n"
+            "공신력 있는 소스(Nielsen, Meta, Google, 대형 광고대행사, 주요 마케팅 미디어) 우선 사용.\n"
+            "\n"
+            + SEARCH_GROUNDING_RULES
+        )
         prompt = f"""마케팅 주제 "{topic}"에 대해 브리핑을 작성해 주세요.
 대상: {career} 마케터 지망생 / 관심 분야: {profile.get("관심업종", "")}
 
+작성을 시작하기 전에 web_search 도구로 먼저 검색하세요. 검색 없이 바로 작성하지 마세요.
+
+{SEARCH_GROUNDING_RULES}
 말투 지침:
 - 존댓말 사용. ~해요, ~예요, ~거든요, ~고요, ~네요, ~죠 같은 부드럽고 자연스러운 어미
 - 마크다운 문법 절대 금지. **, ##, 표(|---|), 코드블록 전부 사용하지 마세요
@@ -278,19 +397,27 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📎 참고 출처
-- 기관명 — https://실제URL
+- 기관명 — https://검색결과에_실제로_나온_URL
+(각 줄에 반드시 http로 시작하는 실제 URL을 하나씩 포함할 것. URL 없는 줄은 쓰지 마세요.)
 
 ※ 위 정보는 AI 학습 데이터 기반으로 수집된 내용으로, 실제 최신 수치와 다를 수 있습니다.
 
-1500자 이상으로 풍부하게 작성해 주세요."""
+1500자 이상으로 풍부하게 작성해 주세요. 단, 검색으로 확인된 내용이 부족하면 분량을 줄이세요. 분량을 채우려고 지어내지 마세요."""
 
         message = await self._client.messages.create(
             model=config.CLAUDE_MAIN_MODEL,
-            max_tokens=6000,
+            max_tokens=8000,
+            system=system_prompt,
             thinking={"type": "disabled"},
+            tools=[_web_search_tool(max_uses=max_uses)],
             messages=[{"role": "user", "content": prompt}],
         )
-        return _extract_text(message)
+        return BriefingResult(
+            text=_trim_preamble(_extract_text(message), "📌"),
+            search_uses=_count_search_uses(message),
+            stop_reason=getattr(message, "stop_reason", None),
+            searched_urls=_extract_searched_urls(message),
+        )
 
     async def extract_keywords(self, briefing_text: str) -> List[str]:
         prompt = (

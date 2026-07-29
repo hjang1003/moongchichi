@@ -8,7 +8,11 @@ from handlers.auth import require_auth
 from services.sheets import get_sheets
 from services.notion import get_notion
 from services.claude import get_claude
-from services.briefing import create_and_send_briefing, parse_briefing_sections, extract_sources
+from services.briefing import (
+    create_and_send_briefing,
+    generate_with_search_verification,
+    parse_briefing_sections,
+)
 import utils
 import config
 
@@ -120,13 +124,17 @@ async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"📌 {topic} 브리핑을 작성 중이에요...")
     sheets = get_sheets()
     profile = await sheets.get_profile()
-    try:
-        briefing = await claude.generate_topic_briefing(topic, profile)
-    except Exception as e:
-        logger.error("Topic briefing failed: %s", e)
-        await update.message.reply_text("일시적인 오류가 발생했어요 😥 잠시 후 다시 시도해 주세요!")
+    verified = await generate_with_search_verification(
+        lambda: claude.generate_topic_briefing(topic, profile, max_uses=4),
+        label=f"/topic 브리핑({topic})",
+    )
+    if verified is None:
+        await update.message.reply_text(
+            "지금은 확인된 자료를 찾지 못했어요. 잠시 후 다시 시도해 주세요"
+        )
         return
 
+    briefing = verified.text
     parts = utils.split_message(briefing)
     for part in parts:
         await update.message.reply_text(part)
@@ -135,7 +143,7 @@ async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         now = utils.get_korea_now()
         date_str = utils.date_to_str(now)
-        sources = extract_sources(briefing)
+        sources = verified.sources
         sections = parse_briefing_sections(briefing)
         content_sections = sections[1:-1] if len(sections) >= 3 else sections
 

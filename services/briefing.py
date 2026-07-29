@@ -2,18 +2,27 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Awaitable, Callable, List, Optional, Tuple
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from services.sheets import get_sheets
-from services.claude import get_claude
+from services.claude import BriefingResult, get_claude
 import utils
 import config
 
 logger = logging.getLogger(__name__)
 
 SECTION_SEP_RE = re.compile(r"^━{5,}$", re.MULTILINE)
+URL_RE = re.compile(r"https?://[^\s<>\"'()\[\]]+")
+# 줄 앞머리의 불릿/번호 마커만 제거 (본문 숫자는 건드리지 않음)
+LIST_MARKER_RE = re.compile(r"^[\s•\-–—*]*(?:\d+[.)]\s*)?")
+_URL_TRAILING_PUNCT = ".,;:!?)]}>\"'…、。」』"
+TRAILING_SEP_RE = re.compile(r"[\s—–\-|]+$")
+
+# 최초 1회 + 재생성 2회
+MAX_BRIEFING_ATTEMPTS = 3
 
 
 def make_section_keyboard(chat_id: int, date_str: str, section_idx: int, saved: bool = False) -> InlineKeyboardMarkup:
@@ -32,8 +41,13 @@ def parse_briefing_sections(text: str) -> List[str]:
 
 
 def extract_sources(text: str) -> List[str]:
+    """참고 출처 섹션에서 실제 URL이 들어있는 줄만 뽑는다.
+
+    웹 검색으로 받은 진짜 URL만 이력·중복 체크에 쓰기 위해 URL이 없는 줄은 버린다.
+    모델이 출력 형식을 벗어나 섹션에서 아무것도 못 뽑으면 본문 전체에서 URL만 훑는다.
+    """
     lines = text.split("\n")
-    sources = []
+    sources: List[str] = []
     in_source_section = False
     for line in lines:
         line = line.strip()
@@ -43,15 +57,157 @@ def extract_sources(text: str) -> List[str]:
         if in_source_section:
             if line.startswith("※") or (line.startswith("━") and len(line) > 5):
                 break
-            if line and not line.startswith("━") and not line.startswith("─"):
-                cleaned = line.lstrip("•-– ").strip()
-                if cleaned:
-                    sources.append(cleaned)
-    return sources
+            if not line or line.startswith("━") or line.startswith("─"):
+                continue
+            cleaned = LIST_MARKER_RE.sub("", line).strip()
+            # URL이 없는 줄(기억으로 적은 기관명 등)은 출처로 인정하지 않는다
+            if not cleaned or not URL_RE.search(cleaned):
+                continue
+            # 시트에 "|"로 join/split 되므로 파이프는 인코딩해서 보관
+            sources.append(cleaned.replace("|", "%7C"))
+
+    if not sources:
+        sources = URL_RE.findall(text)
+
+    seen = set()
+    unique: List[str] = []
+    for s in sources:
+        if s not in seen:
+            seen.add(s)
+            unique.append(s)
+    return unique
+
+
+def _url_keys(url: str) -> set:
+    """URL 비교용 키. 꼬리 문장부호·앵커·마지막 슬래시를 떼고, 쿼리 유무 둘 다 허용한다."""
+    u = url.strip().rstrip(_URL_TRAILING_PUNCT)
+    u = u.split("#", 1)[0].rstrip("/").lower()
+    return {u, u.split("?", 1)[0].rstrip("/")}
+
+
+def sanitize_sources(text: str, searched_urls: List[str]) -> Tuple[str, List[str]]:
+    """검색으로 실제 확인된 URL만 남기고 나머지는 본문에서 제거한다.
+
+    URL이 전부 제거된 줄은 '기관명 —' 껍데기만 남으므로 줄째로 버린다.
+    반환값은 (정리된 본문, 제거된 URL 목록).
+    """
+    allowed: set = set()
+    for u in searched_urls:
+        allowed |= _url_keys(u)
+
+    removed: List[str] = []
+    kept_lines: List[str] = []
+    for line in text.split("\n"):
+        found = URL_RE.findall(line)
+        if not found:
+            kept_lines.append(line)
+            continue
+
+        new_line = line
+        line_removed = [u for u in found if not (_url_keys(u) & allowed)]
+        if not line_removed:
+            kept_lines.append(line)
+            continue
+
+        for url in line_removed:
+            new_line = new_line.replace(url, "")
+        removed.extend(line_removed)
+
+        if URL_RE.search(new_line):
+            kept_lines.append(TRAILING_SEP_RE.sub("", new_line))
+        # 남은 URL이 없으면 그 줄은 통째로 버린다
+
+    return "\n".join(kept_lines), removed
+
+
+@dataclass
+class VerifiedBriefing:
+    """검색 근거 검증을 통과한 브리핑."""
+
+    text: str
+    sources: List[str] = field(default_factory=list)
+    search_uses: int = 0
+    attempts: int = 1
+
+
+async def generate_with_search_verification(
+    generate: Callable[[], Awaitable[BriefingResult]],
+    *,
+    label: str,
+    max_attempts: int = MAX_BRIEFING_ATTEMPTS,
+) -> Optional[VerifiedBriefing]:
+    """웹검색 근거가 확인될 때까지 재생성하는 공통 루프.
+
+    정기 브리핑과 /topic이 같은 검증 절차를 쓴다. 호출부별 차이(모델 메서드, max_uses,
+    시도 횟수, 로그 라벨)는 인자로 받고, 실패 시 사용자 안내는 호출부가 담당한다.
+
+    재생성 조건: 예외 / 빈 본문 / 웹검색 0회 / stop_reason == "pause_turn" /
+    검색으로 확인되지 않은 URL을 걷어낸 뒤 남은 출처 0개.
+    """
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = await generate()
+        except Exception as e:
+            logger.error("%s 생성 실패 (시도 %d/%d): %s", label, attempt, max_attempts, e)
+            continue
+
+        logger.info(
+            "%s 생성 시도 %d/%d — 웹검색 %d회, stop_reason=%s, 검색URL %d개, 본문 %d자",
+            label, attempt, max_attempts,
+            result.search_uses, result.stop_reason,
+            len(result.searched_urls), len(result.text or ""),
+        )
+
+        if not result.text or not result.text.strip():
+            logger.warning("%s: 빈 응답 (시도 %d/%d) — 재생성", label, attempt, max_attempts)
+            continue
+
+        if result.search_uses == 0:
+            logger.warning(
+                "%s: 웹검색이 한 번도 실행되지 않음 (시도 %d/%d) — 재생성",
+                label, attempt, max_attempts,
+            )
+            continue
+
+        if result.stop_reason == "pause_turn":
+            logger.warning(
+                "%s: 검색 루프가 pause_turn으로 중단됨 (시도 %d/%d) — 재생성",
+                label, attempt, max_attempts,
+            )
+            continue
+
+        cleaned_text, removed_urls = sanitize_sources(result.text, result.searched_urls)
+        if removed_urls:
+            logger.warning(
+                "%s: 검색으로 확인되지 않은 URL %d개 제거 (시도 %d/%d): %s",
+                label, len(removed_urls), attempt, max_attempts, ", ".join(removed_urls[:5]),
+            )
+
+        sources = extract_sources(cleaned_text)
+        if not sources:
+            logger.warning(
+                "%s: 검증 후 남은 출처가 0개 (시도 %d/%d) — 폐기 후 재생성",
+                label, attempt, max_attempts,
+            )
+            continue
+
+        logger.info(
+            "%s 검증 통과 (시도 %d/%d) — 웹검색 %d회, 검증된 출처 %d개",
+            label, attempt, max_attempts, result.search_uses, len(sources),
+        )
+        return VerifiedBriefing(
+            text=cleaned_text,
+            sources=sources,
+            search_uses=result.search_uses,
+            attempts=attempt,
+        )
+
+    logger.error("%s 생성 %d회 시도 모두 실패", label, max_attempts)
+    return None
 
 
 async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) -> Optional[dict]:
-    """Call Claude API once. Generate briefing content + extract keywords/sources + classify pools."""
+    """검증을 통과할 때까지 브리핑을 생성하고, 키워드 추출·영역 분류까지 한 번에 처리한다."""
     sheets = get_sheets()
     claude = get_claude()
 
@@ -69,22 +225,22 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
         recent_sources = []
         blocked = {"strict": [], "medium": []}
 
-    try:
-        briefing_text = await claude.generate_briefing(
+    verified = await generate_with_search_verification(
+        lambda: claude.generate_briefing(
             profile, theme, date_str, weekday_ko,
             recent_sources=recent_sources,
             blocked_keywords_strict=blocked.get("strict", []),
             blocked_keywords_medium=blocked.get("medium", []),
-        )
-    except Exception as e:
-        logger.error("Failed to generate briefing: %s", e)
+            max_uses=6,
+        ),
+        label="정기 브리핑",
+    )
+    if verified is None:
+        logger.error("정기 브리핑 발송하지 않음 (검증 실패)")
         return None
 
-    if not briefing_text or not briefing_text.strip():
-        logger.error("Claude returned an empty briefing")
-        return None
-
-    sources = extract_sources(briefing_text)
+    briefing_text = verified.text
+    sources = verified.sources
     sections = parse_briefing_sections(briefing_text)
 
     try:
