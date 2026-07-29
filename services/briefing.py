@@ -289,10 +289,10 @@ async def _send_briefing_to_chat(context, chat_id: int, date_str: str, briefing_
 
     if len(sections) >= 3:
         header = sections[0]
-        # 항목마다 반복된 출처 목록은 제거하고, 맨 끝 출처 섹션만 한 번 발송한다
+        # 항목마다 반복된 출처 목록은 제거한다.
+        # 출처 목록 자체는 메시지로 보내지 않고 📎 소스 보기 버튼으로만 확인한다.
         content_sections = [strip_source_block(s) for s in sections[1:-1]]
         content_sections = [s for s in content_sections if s.strip()]
-        source_section = sections[-1] if "참고 출처" in sections[-1] else ""
 
         try:
             await context.bot.send_message(chat_id=chat_id, text=header)
@@ -306,13 +306,6 @@ async def _send_briefing_to_chat(context, chat_id: int, date_str: str, briefing_
                 await context.bot.send_message(chat_id=chat_id, text=section, reply_markup=reply_markup)
             except Exception as e:
                 logger.error("Failed to send briefing section %d to %s: %s", idx, chat_id, e)
-                return False
-
-        if source_section:
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=source_section)
-            except Exception as e:
-                logger.error("Failed to send source list to %s: %s", chat_id, e)
                 return False
 
         cached_sections = content_sections

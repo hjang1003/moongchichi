@@ -24,11 +24,44 @@ WEB_SEARCH_TOOL_TYPE = "web_search_20250305"
 REQUEST_TIMEOUT_SEC = 180.0
 
 
-def _web_search_tool(max_uses: int) -> Dict:
+# 검색 단계에서 아예 걷어낼 저품질 출처 도메인.
+# 커뮤니티, 개인 블로그 플랫폼, 채용 사이트 게시판은 마케팅 브리핑 출처로 부적합하다.
+# 프롬프트로 막으면 모델이 이미 읽은 뒤라 통계가 새어 들어오므로 검색 단계에서 차단한다.
+BLOCKED_SOURCE_DOMAINS = [
+    "winspec.co.kr",
+    "community.linkareer.com",
+    "linkareer.com",
+    "blog.naver.com",
+    "m.blog.naver.com",
+    "cafe.naver.com",
+    "tistory.com",
+    "brunch.co.kr",
+    "velog.io",
+    "dcinside.com",
+    "fmkorea.com",
+    "ppomppu.co.kr",
+    "clien.net",
+    "ruliweb.com",
+    "jobkorea.co.kr",
+    "saramin.co.kr",
+    "worldreview1989.com",
+    "blogspot.com",
+    "wordpress.com",
+    "medium.com",
+    "wixsite.com",
+    "weebly.com",
+    "squarespace.com",
+]
+
+
+def _web_search_tool(max_uses: int, blocked_domains: Optional[List[str]] = None) -> Dict:
     return {
         "type": WEB_SEARCH_TOOL_TYPE,
         "name": "web_search",
         "max_uses": max_uses,
+        "blocked_domains": list(
+            BLOCKED_SOURCE_DOMAINS if blocked_domains is None else blocked_domains
+        ),
     }
 
 
@@ -63,6 +96,9 @@ SEARCH_GROUNDING_RULES = (
     "'~라고 해요', '~다고 하네요', '~라는 분석이 나왔어요', '~에 따르면'을 문장마다 반복하지 마라. "
     "출처 표시는 각 항목 끝의 📌 출처 줄과 마지막 참고 출처 목록이 담당한다. "
     "다만 전망, 추정, 해석처럼 단정할 수 없는 내용은 인용체를 유지하라.\n"
+    "10. 검색 결과를 그대로 이어붙이지 마라. 읽고 이해한 내용을 자기 문장으로 요약해서 써라. "
+    "같은 사실을 표현만 바꿔 두 번 쓰지 마라. 한 문단 안에서 같은 내용을 반복 서술하는 것은 금지다. "
+    "여러 출처가 같은 내용을 말하면 한 번만 쓰고 출처를 함께 표기하라.\n"
 )
 
 
@@ -165,7 +201,12 @@ class ClaudeService:
             "문단 사이에는 빈 줄을 넣어 가독성을 확보하세요.\n"
             "각 항목 말미에는 출처 기관명만 간략히 표기합니다: 📌 출처: 기관명/미디어명\n"
             "실제 URL은 마지막 '📎 참고 출처 전체 목록' 섹션에만 포함합니다. 형식: - 기관명 — https://실제URL\n"
-            "공신력 있는 소스(Nielsen, Meta, Google, 대형 광고대행사, 주요 마케팅 미디어) 우선 사용.\n"
+            "[출처 매체 기준]\n"
+            "좋은 예 — 국내: 아이보스, OpenAds, 모비인사이드, 매일경제, 한국경제, 조선비즈, 전자신문, "
+            "각 브랜드 공식 뉴스룸. 해외: Nielsen, Meta, Google, 대형 광고대행사, 주요 마케팅 전문 미디어.\n"
+            "나쁜 예 — 커뮤니티 자유게시판, 취업 커뮤니티, 개인 블로그, 네이버 카페, 티스토리, "
+            "채용 사이트 게시판.\n"
+            "나쁜 예에 해당하는 출처는 절대 사용 금지. 좋은 예에 해당하는 매체만 출처로 인정한다.\n"
             "\n"
             + SEARCH_GROUNDING_RULES +
             "\n"
@@ -303,7 +344,7 @@ class ClaudeService:
 - 기관명 — https://검색결과에_실제로_나온_URL
 (각 줄에 반드시 http로 시작하는 실제 URL을 하나씩 포함할 것. URL 없는 줄은 쓰지 마세요.)
 
-※ 위 정보는 AI 학습 데이터 기반으로 수집된 내용으로, 실제 최신 수치와 다를 수 있습니다."""
+※ 위 내용은 웹 검색으로 확인한 자료를 정리한 것입니다."""
 
         message = await self._client.with_options(
             timeout=REQUEST_TIMEOUT_SEC, max_retries=0
@@ -389,7 +430,12 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
         system_prompt = (
             "당신은 마케팅 주제 브리핑 작성 AI입니다.\n"
             "부드럽고 친근한 존댓말로 작성합니다.\n"
-            "공신력 있는 소스(Nielsen, Meta, Google, 대형 광고대행사, 주요 마케팅 미디어) 우선 사용.\n"
+            "[출처 매체 기준]\n"
+            "좋은 예 — 국내: 아이보스, OpenAds, 모비인사이드, 매일경제, 한국경제, 조선비즈, 전자신문, "
+            "각 브랜드 공식 뉴스룸. 해외: Nielsen, Meta, Google, 대형 광고대행사, 주요 마케팅 전문 미디어.\n"
+            "나쁜 예 — 커뮤니티 자유게시판, 취업 커뮤니티, 개인 블로그, 네이버 카페, 티스토리, "
+            "채용 사이트 게시판.\n"
+            "나쁜 예에 해당하는 출처는 절대 사용 금지. 좋은 예에 해당하는 매체만 출처로 인정한다.\n"
             "\n"
             + SEARCH_GROUNDING_RULES
         )
@@ -431,7 +477,7 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
 - 기관명 — https://검색결과에_실제로_나온_URL
 (각 줄에 반드시 http로 시작하는 실제 URL을 하나씩 포함할 것. URL 없는 줄은 쓰지 마세요.)
 
-※ 위 정보는 AI 학습 데이터 기반으로 수집된 내용으로, 실제 최신 수치와 다를 수 있습니다.
+※ 위 내용은 웹 검색으로 확인한 자료를 정리한 것입니다.
 
 1500자 이상으로 풍부하게 작성해 주세요. 단, 검색으로 확인된 내용이 부족하면 분량을 줄이세요. 분량을 채우려고 지어내지 마세요."""
 
