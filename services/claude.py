@@ -9,6 +9,16 @@ import config
 logger = logging.getLogger(__name__)
 
 
+def _extract_text(message) -> str:
+    """Join the text of every text block in the response. Returns "" if there is none."""
+    parts = [
+        block.text
+        for block in (getattr(message, "content", None) or [])
+        if getattr(block, "type", None) == "text"
+    ]
+    return "".join(parts)
+
+
 class ClaudeService:
     def __init__(self):
         self._client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
@@ -170,11 +180,12 @@ class ClaudeService:
 
         message = await self._client.messages.create(
             model=config.CLAUDE_MAIN_MODEL,
-            max_tokens=4096,
+            max_tokens=8192,
             system=system_prompt,
+            thinking={"type": "disabled"},
             messages=[{"role": "user", "content": user_prompt}],
         )
-        return message.content[0].text
+        return _extract_text(message)
 
     async def parse_onboarding_answers(self, answers: Dict[str, str]) -> Dict[str, str]:
         prompt = f"""사용자가 마케팅 봇 온보딩에서 아래와 같이 답변했습니다.
@@ -204,7 +215,7 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
             messages=[{"role": "user", "content": prompt}],
         )
         import json
-        text = message.content[0].text.strip()
+        text = _extract_text(message).strip()
         # Extract JSON from response
         start = text.find("{")
         end = text.rfind("}") + 1
@@ -234,7 +245,7 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
         )
-        return message.content[0].text
+        return _extract_text(message)
 
     async def generate_topic_briefing(self, topic: str, profile: Dict[str, str]) -> str:
         career = profile.get("경력수준", "신입")
@@ -275,10 +286,11 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
 
         message = await self._client.messages.create(
             model=config.CLAUDE_MAIN_MODEL,
-            max_tokens=3000,
+            max_tokens=6000,
+            thinking={"type": "disabled"},
             messages=[{"role": "user", "content": prompt}],
         )
-        return message.content[0].text
+        return _extract_text(message)
 
     async def extract_keywords(self, briefing_text: str) -> List[str]:
         prompt = (
@@ -296,7 +308,7 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
             max_tokens=100,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = message.content[0].text.strip()
+        raw = _extract_text(message).strip()
         return [k.strip() for k in raw.split(",") if k.strip()]
 
     async def classify_briefing_pools(self, sections: List[str]) -> List[str]:
@@ -323,7 +335,7 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
                 max_tokens=30,
                 messages=[{"role": "user", "content": prompt}],
             )
-            raw = message.content[0].text.strip()
+            raw = _extract_text(message).strip()
             parsed = [p.strip().upper() for p in raw.split(",") if p.strip()]
             parsed = [p for p in parsed if p in ("T", "F", "G")]
             while len(parsed) < len(sections):
@@ -339,7 +351,7 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
             max_tokens=10,
             messages=[{"role": "user", "content": prompt}],
         )
-        answer = message.content[0].text.strip().lower()
+        answer = _extract_text(message).strip().lower()
         return "예" in answer or "yes" in answer
 
     async def parse_date_expression(self, expression: str, today_str: str) -> str:
@@ -352,7 +364,7 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
             max_tokens=20,
             messages=[{"role": "user", "content": prompt}],
         )
-        return message.content[0].text.strip()
+        return _extract_text(message).strip()
 
     async def answer_natural_language(
         self, query: str, history: List[Dict], profile: Dict[str, str]
@@ -385,7 +397,7 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
             system=system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
-        return message.content[0].text
+        return _extract_text(message)
 
     async def generate_monthly_summary(self, briefings: List[Dict]) -> str:
         if not briefings:
@@ -432,11 +444,12 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
 
         message = await self._client.messages.create(
             model=config.CLAUDE_MAIN_MODEL,
-            max_tokens=2000,
+            max_tokens=4000,
             system=system_prompt,
+            thinking={"type": "disabled"},
             messages=[{"role": "user", "content": prompt}],
         )
-        return message.content[0].text
+        return _extract_text(message)
 
     async def summarize_profile_for_confirm(self, profile_data: Dict[str, str]) -> str:
         prompt = f"""사용자가 입력한 마케팅 봇 프로필을 아래 정보를 기반으로 친근하게 요약해 주세요.
@@ -461,7 +474,7 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
             max_tokens=512,
             messages=[{"role": "user", "content": prompt}],
         )
-        return message.content[0].text
+        return _extract_text(message)
 
 
 _claude_service: ClaudeService | None = None

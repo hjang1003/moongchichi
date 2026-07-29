@@ -80,6 +80,10 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
         logger.error("Failed to generate briefing: %s", e)
         return None
 
+    if not briefing_text or not briefing_text.strip():
+        logger.error("Claude returned an empty briefing")
+        return None
+
     sources = extract_sources(briefing_text)
     sections = parse_briefing_sections(briefing_text)
 
