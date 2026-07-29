@@ -78,6 +78,19 @@ def extract_sources(text: str) -> List[str]:
     return unique
 
 
+def strip_source_block(section: str) -> str:
+    """항목 안에 끼어든 '참고 출처' 목록을 잘라낸다.
+
+    모델이 항목마다 출처 목록을 반복해서 붙이면 같은 링크 묶음이 여러 번 발송된다.
+    출처 목록은 항상 섹션 끝에 오므로 해당 줄부터 끝까지 버린다.
+    """
+    lines = section.split("\n")
+    for i, line in enumerate(lines):
+        if "참고 출처" in line:
+            return "\n".join(lines[:i]).rstrip()
+    return section
+
+
 def _url_keys(url: str) -> set:
     """URL 비교용 키. 꼬리 문장부호·앵커·마지막 슬래시를 떼고, 쿼리 유무 둘 다 허용한다."""
     u = url.strip().rstrip(_URL_TRAILING_PUNCT)
@@ -276,7 +289,10 @@ async def _send_briefing_to_chat(context, chat_id: int, date_str: str, briefing_
 
     if len(sections) >= 3:
         header = sections[0]
-        content_sections = sections[1:-1]
+        # 항목마다 반복된 출처 목록은 제거하고, 맨 끝 출처 섹션만 한 번 발송한다
+        content_sections = [strip_source_block(s) for s in sections[1:-1]]
+        content_sections = [s for s in content_sections if s.strip()]
+        source_section = sections[-1] if "참고 출처" in sections[-1] else ""
 
         try:
             await context.bot.send_message(chat_id=chat_id, text=header)
@@ -290,6 +306,13 @@ async def _send_briefing_to_chat(context, chat_id: int, date_str: str, briefing_
                 await context.bot.send_message(chat_id=chat_id, text=section, reply_markup=reply_markup)
             except Exception as e:
                 logger.error("Failed to send briefing section %d to %s: %s", idx, chat_id, e)
+                return False
+
+        if source_section:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=source_section)
+            except Exception as e:
+                logger.error("Failed to send source list to %s: %s", chat_id, e)
                 return False
 
         cached_sections = content_sections
