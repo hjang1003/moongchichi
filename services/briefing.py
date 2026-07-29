@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -199,10 +199,22 @@ async def create_and_send_briefing_to_many(
     context,
     primary_chat_id: Optional[int],
     mirror_chat_ids: Optional[List[int]] = None,
-) -> bool:
-    """For scheduled daily briefing: generate ONCE, send to primary (with buttons) and mirrors (no buttons), save history ONCE."""
+) -> Tuple[List[int], List[int]]:
+    """For scheduled daily briefing: generate ONCE, send to primary (with buttons) and mirrors (no buttons), save history ONCE.
+
+    Returns (successes, failures): lists of chat_ids that succeeded / failed to receive the briefing.
+    If today is not a briefing day (no theme), returns ([], []). If generation itself fails, all intended
+    recipients are returned in failures.
+    """
     if mirror_chat_ids is None:
         mirror_chat_ids = []
+
+    intended: List[int] = []
+    if primary_chat_id:
+        intended.append(primary_chat_id)
+    for cid in mirror_chat_ids:
+        if cid and cid != primary_chat_id and cid not in intended:
+            intended.append(cid)
 
     sheets = get_sheets()
     now = utils.get_korea_now()
@@ -212,20 +224,24 @@ async def create_and_send_briefing_to_many(
 
     if not theme:
         logger.info("Today (%s) is not a weekday, skipping briefing.", date_str)
-        return False
+        return [], []
 
     briefing_data = await _generate_briefing_data(date_str, theme, weekday_ko)
     if not briefing_data:
-        return False
+        return [], list(intended)
 
-    sent_count = 0
+    successes: List[int] = []
+    failures: List[int] = []
 
     if primary_chat_id:
-        ok = await _send_briefing_to_chat(
-            context, primary_chat_id, date_str, briefing_data, include_buttons=True
-        )
-        if ok:
-            sent_count += 1
+        try:
+            ok = await _send_briefing_to_chat(
+                context, primary_chat_id, date_str, briefing_data, include_buttons=True
+            )
+        except Exception as e:
+            logger.error("Failed to send primary briefing to %s: %s", primary_chat_id, e)
+            ok = False
+        (successes if ok else failures).append(primary_chat_id)
 
     for chat_id in mirror_chat_ids:
         if not chat_id or chat_id == primary_chat_id:
@@ -234,12 +250,12 @@ async def create_and_send_briefing_to_many(
             ok = await _send_briefing_to_chat(
                 context, chat_id, date_str, briefing_data, include_buttons=False
             )
-            if ok:
-                sent_count += 1
         except Exception as e:
             logger.error("Failed to send mirror briefing to %s: %s", chat_id, e)
+            ok = False
+        (successes if ok else failures).append(chat_id)
 
-    if sent_count > 0:
+    if successes:
         try:
             await sheets.add_history(
                 date_str, theme, True, briefing_data["sources"], False,
@@ -249,4 +265,4 @@ async def create_and_send_briefing_to_many(
         except Exception as e:
             logger.error("Sheets history save failed: %s", e)
 
-    return sent_count > 0
+    return successes, failures

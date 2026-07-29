@@ -1,6 +1,8 @@
 from __future__ import annotations
 import logging
+from datetime import date
 
+import holidays
 from telegram.ext import Application
 
 import utils
@@ -14,10 +16,49 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL_SECONDS = 60
 WEEKDAYS = (0, 1, 2, 3, 4)
 
+_KR_HOLIDAYS = holidays.country_holidays("KR")
+
+# 패키지가 모르는 임시공휴일이 생기면 여기에 추가
+MANUAL_KR_HOLIDAYS: set[date] = set()
+
+
+def is_korean_holiday(d: date) -> bool:
+    return d in _KR_HOLIDAYS or d in MANUAL_KR_HOLIDAYS
+
+
+async def _notify_admin_failure(
+    context,
+    admin_id,
+    date_str: str,
+    stage: str,
+    error_msg: str,
+    header: str = "⚠️ 일일 브리핑 발송 실패",
+) -> None:
+    if not admin_id:
+        return
+    try:
+        admin_int = int(str(admin_id).strip())
+        text = (
+            f"{header}\n\n"
+            f"날짜: {date_str}\n"
+            f"단계: {stage}\n"
+            f"오류: {error_msg}"
+        )
+        await context.bot.send_message(chat_id=admin_int, text=text)
+    except Exception as notify_err:
+        logger.error("Failed to notify admin of briefing failure: %s", notify_err)
+
 
 async def _send_daily_briefing(context) -> None:
     now = utils.get_korea_now()
     if now.weekday() not in WEEKDAYS:
+        return
+
+    if is_korean_holiday(now.date()):
+        today_str = now.strftime("%Y-%m-%d")
+        if context.bot_data.get("last_briefing_date") != today_str:
+            logger.info("Today (%s) is a Korean holiday, skipping daily briefing.", today_str)
+            context.bot_data["last_briefing_date"] = today_str
         return
 
     target_hour, target_minute = context.job.data
@@ -62,10 +103,43 @@ async def _send_daily_briefing(context) -> None:
 
     try:
         from services.briefing import create_and_send_briefing_to_many
-        await create_and_send_briefing_to_many(context, primary, mirrors)
-        logger.info("Daily briefing sent (primary=%s, mirrors=%s)", primary, mirrors)
+        successes, failures = await create_and_send_briefing_to_many(context, primary, mirrors)
+
+        if failures:
+            user_failed = primary in failures
+            mirror_failures = [f for f in failures if f != primary]
+
+            detail_lines = []
+            if user_failed:
+                detail_lines.append(f"- 사용자 ({primary})")
+            for m in mirror_failures:
+                detail_lines.append(f"- 관리자 미러 ({m})")
+
+            success_str = ", ".join(str(s) for s in successes) if successes else "없음"
+            error_msg = "실패 대상:\n" + "\n".join(detail_lines) + f"\n성공 대상: {success_str}"
+            header = "🚨 사용자 발송 실패!" if user_failed else "⚠️ 일일 브리핑 발송 실패 (미러)"
+
+            logger.error(
+                "Daily briefing had failures: successes=%s failures=%s user_failed=%s",
+                successes, failures, user_failed,
+            )
+            await _notify_admin_failure(
+                context, admin_id, today_str,
+                stage="수신자별 발송",
+                error_msg=error_msg,
+                header=header,
+            )
+        elif successes:
+            logger.info("Daily briefing sent (primary=%s, mirrors=%s)", primary, mirrors)
+        else:
+            logger.info("Daily briefing skipped (no theme or no recipients).")
     except Exception as e:
         logger.error("Failed to send daily briefing: %s", e)
+        await _notify_admin_failure(
+            context, admin_id, today_str,
+            stage="일일 브리핑 실행 중 예외",
+            error_msg=f"{type(e).__name__}: {e}",
+        )
 
 
 async def _check_monthly_summary(context) -> None:
