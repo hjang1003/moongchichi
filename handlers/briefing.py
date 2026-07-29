@@ -125,7 +125,7 @@ async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     sheets = get_sheets()
     profile = await sheets.get_profile()
     verified = await generate_with_search_verification(
-        lambda: claude.generate_topic_briefing(topic, profile, max_uses=4),
+        lambda: claude.generate_topic_briefing(topic, profile, max_uses=2),
         label=f"/topic 브리핑({topic})",
     )
     if verified is None:

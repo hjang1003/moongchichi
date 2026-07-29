@@ -11,10 +11,17 @@ logger = logging.getLogger(__name__)
 
 
 # Anthropic 서버 사이드 웹 검색 도구.
-# claude-sonnet-5는 동적 필터링이 포함된 _20260209 버전을 지원한다.
-# (구버전 web_search_20250305는 Opus 4.6 / Sonnet 4.6 이전 모델용)
-# 동적 필터링이 내부적으로 코드 실행을 쓰므로 code_execution을 따로 선언하면 안 된다.
-WEB_SEARCH_TOOL_TYPE = "web_search_20260209"
+# _20260209 버전은 동적 필터링이 내장돼 있고 그게 내부적으로 코드 실행을 돌려서 느리다.
+# 동적 필터링만 끄는 파라미터는 없으므로(allowed_callers는 커스텀 도구용이라 여기 안 먹는다)
+# 동적 필터링이 없는 기본 버전으로 내려서 지연을 줄인다.
+# 결과 블록 타입은 두 버전 모두 web_search_tool_result라 검증 로직은 그대로 동작한다.
+WEB_SEARCH_TOOL_TYPE = "web_search_20250305"
+
+# 검색이 붙은 브리핑 호출용 타임아웃(초). SDK 기본값은 10분이라 너무 길다.
+# max_retries=0과 함께 써야 한다. SDK가 타임아웃을 자체 재시도하면
+# 실제 대기 시간이 타임아웃 × (max_retries+1)로 늘어나기 때문.
+# 재시도는 services/briefing.py의 검증 루프가 담당한다.
+REQUEST_TIMEOUT_SEC = 180.0
 
 
 def _web_search_tool(max_uses: int) -> Dict:
@@ -126,7 +133,7 @@ class ClaudeService:
         recent_sources: Optional[List[str]] = None,
         blocked_keywords_strict: Optional[List[str]] = None,
         blocked_keywords_medium: Optional[List[str]] = None,
-        max_uses: int = 6,
+        max_uses: int = 3,
     ) -> BriefingResult:
         industry_ratio = profile.get("관심업종비율", "60")
         adjacent_ratio = profile.get("인접산업비율", "30")
@@ -279,7 +286,9 @@ class ClaudeService:
 
 ※ 위 정보는 AI 학습 데이터 기반으로 수집된 내용으로, 실제 최신 수치와 다를 수 있습니다."""
 
-        message = await self._client.messages.create(
+        message = await self._client.with_options(
+            timeout=REQUEST_TIMEOUT_SEC, max_retries=0
+        ).messages.create(
             model=config.CLAUDE_MAIN_MODEL,
             max_tokens=12000,
             system=system_prompt,
@@ -355,7 +364,7 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
         return _extract_text(message)
 
     async def generate_topic_briefing(
-        self, topic: str, profile: Dict[str, str], max_uses: int = 4
+        self, topic: str, profile: Dict[str, str], max_uses: int = 2
     ) -> BriefingResult:
         career = profile.get("경력수준", "신입")
         system_prompt = (
@@ -404,7 +413,9 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
 
 1500자 이상으로 풍부하게 작성해 주세요. 단, 검색으로 확인된 내용이 부족하면 분량을 줄이세요. 분량을 채우려고 지어내지 마세요."""
 
-        message = await self._client.messages.create(
+        message = await self._client.with_options(
+            timeout=REQUEST_TIMEOUT_SEC, max_retries=0
+        ).messages.create(
             model=config.CLAUDE_MAIN_MODEL,
             max_tokens=8000,
             system=system_prompt,

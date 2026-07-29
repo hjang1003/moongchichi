@@ -231,7 +231,7 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
             recent_sources=recent_sources,
             blocked_keywords_strict=blocked.get("strict", []),
             blocked_keywords_medium=blocked.get("medium", []),
-            max_uses=6,
+            max_uses=3,
         ),
         label="정기 브리핑",
     )
