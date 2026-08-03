@@ -7,7 +7,7 @@ from typing import Awaitable, Callable, List, Optional, Tuple
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from services.sheets import get_sheets
+from services.sheets import RECENT_TITLES_KEY, get_sheets
 from services.claude import BriefingResult, get_claude
 import utils
 import config
@@ -78,6 +78,30 @@ def extract_sources(text: str) -> List[str]:
             seen.add(s)
             unique.append(s)
     return unique
+
+
+def strip_markdown(text: str) -> str:
+    """발송 직전 마크다운을 걷어낸다. 프롬프트로만 막으면 새어나간다.
+
+    실제 발송분 52일치를 훑어보니 ** 2건, # 헤더 2건, 표 문법 1건이 그대로 나갔다.
+    텔레그램은 parse_mode 없이 보내므로 이 문자들이 날것 그대로 보인다.
+    구분선(─ ━)과 이모지는 서식이 아니라 본문이므로 건드리지 않는다.
+    """
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)          # **굵게** -> 굵게
+    text = re.sub(r"^#{1,6}\s*", "", text, flags=re.MULTILINE)  # 줄머리 헤더 기호
+    text = re.sub(r"^\s*\|.*\|\s*$", "", text, flags=re.MULTILINE)  # 표 행
+    text = re.sub(r"\n{3,}", "\n\n", text)               # 표를 지우며 생긴 빈 줄 정리
+    return text.strip()
+
+
+def extract_item_titles(sections: List[str]) -> List[str]:
+    """각 항목의 제목 줄만 뽑는다. 다음 브리핑에서 같은 구도를 피하는 데 쓴다."""
+    titles = []
+    for s in sections:
+        first = next((ln.strip() for ln in s.split("\n") if ln.strip()), "")
+        if first:
+            titles.append(first.replace("|", "/"))  # 시트에 "|"로 join되므로 치환
+    return titles
 
 
 def strip_source_block(section: str) -> str:
@@ -283,6 +307,9 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
         blocked = {"strict": [], "medium": []}
         blocked_entities = {}
 
+    # 최근 제목은 시트 읽기를 한 번 더 하지 않으려고 엔티티 조회에 얹혀 온다. 여기서 분리한다.
+    recent_titles = blocked_entities.pop(RECENT_TITLES_KEY, [])
+
     verified = await generate_with_search_verification(
         lambda: claude.generate_briefing(
             profile, theme, date_str, weekday_ko,
@@ -290,6 +317,7 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
             blocked_keywords_strict=blocked.get("strict", []),
             blocked_keywords_medium=blocked.get("medium", []),
             blocked_entities=blocked_entities,
+            recent_titles=recent_titles,
             max_uses=3,
         ),
         label="정기 브리핑",
@@ -330,6 +358,7 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
         "keywords": keywords,
         "pools": pools,
         "entities": entities,
+        "titles": extract_item_titles(content_sections),
         "theme": theme,
     }
 
@@ -345,8 +374,9 @@ async def _send_briefing_to_chat(context, chat_id: int, date_str: str, briefing_
         header = sections[0]
         # 항목마다 반복된 출처 목록은 제거한다.
         # 출처 목록 자체는 메시지로 보내지 않고 📎 소스 보기 버튼으로만 확인한다.
-        content_sections = [strip_source_block(s) for s in sections[1:-1]]
+        content_sections = [strip_markdown(strip_source_block(s)) for s in sections[1:-1]]
         content_sections = [s for s in content_sections if s.strip()]
+        header = strip_markdown(header)
 
         try:
             await context.bot.send_message(chat_id=chat_id, text=header)
@@ -364,7 +394,7 @@ async def _send_briefing_to_chat(context, chat_id: int, date_str: str, briefing_
 
         cached_sections = content_sections
     else:
-        parts = utils.split_message(briefing_text)
+        parts = utils.split_message(strip_markdown(briefing_text))
         for part in parts[:-1]:
             try:
                 await context.bot.send_message(chat_id=chat_id, text=part)
@@ -419,6 +449,7 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
             keywords=briefing_data["keywords"],
             pools=briefing_data["pools"],
             entities=briefing_data.get("entities", []),
+            titles=briefing_data.get("titles", []),
         )
     except Exception as e:
         logger.error("Sheets history save failed: %s", e)
@@ -493,6 +524,7 @@ async def create_and_send_briefing_to_many(
                 keywords=briefing_data["keywords"],
                 pools=briefing_data["pools"],
                 entities=briefing_data.get("entities", []),
+                titles=briefing_data.get("titles", []),
             )
         except Exception as e:
             logger.error("Sheets history save failed: %s", e)

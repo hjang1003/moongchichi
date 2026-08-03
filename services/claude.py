@@ -192,6 +192,7 @@ class ClaudeService:
         blocked_keywords_strict: Optional[List[str]] = None,
         blocked_keywords_medium: Optional[List[str]] = None,
         blocked_entities: Optional[Dict[str, List[str]]] = None,
+        recent_titles: Optional[List[str]] = None,
         max_uses: int = 3,
     ) -> BriefingResult:
         industry_ratio = profile.get("관심업종비율", "60")
@@ -304,6 +305,19 @@ class ClaudeService:
                     + "\n".join(soft_lines)
                 )
 
+        if recent_titles:
+            system_prompt += (
+                "\n\n[최근 다룬 항목 — 같은 구도 반복 금지]\n"
+                "아래는 최근 4주간 이미 내보낸 항목 제목이다. "
+                "고유명사가 달라도 같은 구도를 반복하면 받는 사람에게는 같은 내용으로 읽힌다. "
+                "실제로 '홈·리빙 브랜드의 콘텐츠 전략'류가 9주 연속 나간 적이 있다.\n"
+                "다음을 금지한다. 같은 업종에 같은 각도를 다시 붙이는 것, "
+                "'A 브랜드의 B 콘텐츠 성과/전략' 같은 동일 문형을 다시 쓰는 것, "
+                "지난번과 업종만 바꾸고 나머지 구성이 같은 항목.\n"
+                "업종이 겹치면 각도를 바꿔라. 각도가 겹치면 업종을 바꿔라. 둘 다 겹치면 그 소재를 버려라:\n"
+                + "\n".join(f"- {t}" for t in recent_titles)
+            )
+
         if recent_sources:
             system_prompt += (
                 "\n\n[중복 출처 금지]\n"
@@ -347,7 +361,8 @@ class ClaudeService:
    - 빈 줄
    - [출처: 기관명/미디어명]
 3. 국내 + 글로벌 소스 균형 있게 사용
-4. 전체 분량: 3000자 내외. 단, 검색으로 확인된 내용이 부족하면 분량을 줄여라. 분량을 채우려고 지어내지 마라
+4. 전체 분량: 3000자 내외. 항목 하나는 최소 600자다. 그보다 짧으면 배경·핵심·실무 포인트 구조가 성립하지 않는다.
+   단, 검색으로 확인된 내용이 부족하면 분량을 줄여라. 분량을 채우려고 지어내지 마라
 5. ** ** 마크다운 굵게 표시 절대 금지
 6. 각 항목의 [출처: 기관명]과 마지막 참고 출처 목록은 web_search 결과에 실제로 나온 페이지만 사용할 것
 7. 참고 출처 전체 목록은 브리핑 맨 마지막에 딱 한 번만 작성할 것. 항목마다 반복하지 말 것

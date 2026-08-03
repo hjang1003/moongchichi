@@ -21,7 +21,12 @@ SETTINGS_TAB = "설정"
 PROFILE_TAB = "프로필"
 HISTORY_TAB = "브리핑이력"
 
-HISTORY_HEADERS = ["날짜", "요일테마", "발송여부", "소스링크", "노션저장여부", "주제키워드", "영역분류", "엔티티"]
+HISTORY_HEADERS = ["날짜", "요일테마", "발송여부", "소스링크", "노션저장여부", "주제키워드", "영역분류", "엔티티", "항목제목"]
+
+# 최근 제목을 되돌아보는 범위(일). 제목은 차단이 아니라 "비슷하게 쓰지 마라"용 참고 자료다.
+TITLE_LOOKBACK_DAYS = 28
+# 엔티티 차단 목록과 함께 실려 나가는 최근 제목의 키. 시트 읽기를 한 번 더 하지 않으려고 같이 담는다.
+RECENT_TITLES_KEY = "_recent_titles"
 
 # 엔티티 유형별 차단 기간(일). 유형 표기는 claude.extract_entities 출력과 반드시 일치해야 한다.
 ENTITY_BLOCK_DAYS = {"인물": 90, "이론": 90, "브랜드": 45, "캠페인": 180}
@@ -123,6 +128,7 @@ class SheetsService:
         keywords: Optional[List[str]] = None,
         pools: Optional[List[str]] = None,
         entities: Optional[List[str]] = None,
+        titles: Optional[List[str]] = None,
     ) -> None:
         ws = self._get_tab(HISTORY_TAB)
         existing = ws.get_all_values()
@@ -137,9 +143,10 @@ class SheetsService:
         keywords_str = "|".join(keywords) if keywords else ""
         pools_str = "|".join(pools) if pools else ""
         entities_str = "|".join(entities) if entities else ""
+        titles_str = "|".join(titles) if titles else ""
         ws.append_row([
             date_str, theme, str(sent), "|".join(sources),
-            str(notion_saved), keywords_str, pools_str, entities_str,
+            str(notion_saved), keywords_str, pools_str, entities_str, titles_str,
         ])
 
     def _sync_get_history(self, limit: int) -> List[Dict]:
@@ -262,11 +269,21 @@ class SheetsService:
             return blocked
         now = datetime.datetime.now()
         lookback_cutoff = (now - datetime.timedelta(days=ENTITY_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+        title_cutoff = (now - datetime.timedelta(days=TITLE_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
         latest: Dict[str, Dict[str, str]] = {etype: {} for etype in ENTITY_BLOCK_DAYS}
+        recent_titles: List[str] = []
         for row in ws.get_all_records():
             date_val = str(row.get("날짜", ""))
             if not date_val or date_val < lookback_cutoff:
                 continue
+
+            # 제목은 엔티티가 없는 행에도 있을 수 있으므로 엔티티 검사보다 먼저 걷는다
+            if date_val >= title_cutoff:
+                for t in str(row.get("항목제목", "")).split("|"):
+                    t = t.strip()
+                    if t and t not in recent_titles:
+                        recent_titles.append(t)
+
             raw = str(row.get("엔티티", ""))
             if not raw:
                 continue
@@ -289,6 +306,7 @@ class SheetsService:
                     continue
                 if (now - last_dt).days <= block_days:
                     blocked[etype].append(name)
+        blocked[RECENT_TITLES_KEY] = recent_titles
         return blocked
 
     def _sync_get_pool_distribution(self, weeks: int) -> Dict[str, int]:
@@ -334,10 +352,11 @@ class SheetsService:
         keywords: Optional[List[str]] = None,
         pools: Optional[List[str]] = None,
         entities: Optional[List[str]] = None,
+        titles: Optional[List[str]] = None,
     ) -> None:
         await self._run(
             self._sync_add_history,
-            date_str, theme, sent, sources, notion_saved, keywords, pools, entities,
+            date_str, theme, sent, sources, notion_saved, keywords, pools, entities, titles,
         )
 
     async def get_recent_sources(self, weeks: int = 4) -> List[str]:
