@@ -10,6 +10,7 @@ from handlers.admin import handle_reset_confirm
 from services.sheets import get_sheets
 from services.claude import get_claude
 from services.notion import get_notion
+from services.briefing import strip_markdown
 from scheduler import reschedule_jobs
 import utils
 import config
@@ -316,6 +317,6 @@ async def handle_natural_language(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("일시적인 오류가 발생했어요 😥 잠시 후 다시 시도해 주세요!")
         return
 
-    parts = utils.split_message(answer)
+    parts = utils.split_message(strip_markdown(answer))
     for part in parts:
         await update.message.reply_text(part)

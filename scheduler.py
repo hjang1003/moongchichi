@@ -9,7 +9,7 @@ import utils
 from services.sheets import get_sheets
 from services.notion import get_notion
 from services.claude import get_claude
-from services.briefing import create_and_send_briefing
+from services.briefing import create_and_send_briefing, strip_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +186,7 @@ async def _check_monthly_summary(context) -> None:
     admin_id = await sheets.get_setting("관리자_ChatID")
     targets = [uid for uid in [user_id, admin_id] if uid]
 
-    parts = utils.split_message(summary)
+    parts = utils.split_message(strip_markdown(summary))
     for uid in targets:
         try:
             for part in parts:

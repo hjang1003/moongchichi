@@ -12,6 +12,7 @@ from services.briefing import (
     create_and_send_briefing,
     generate_with_search_verification,
     parse_briefing_sections,
+    strip_markdown,
 )
 import utils
 import config
@@ -134,7 +135,7 @@ async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    briefing = verified.text
+    briefing = strip_markdown(verified.text)
     parts = utils.split_message(briefing)
     for part in parts:
         await update.message.reply_text(part)
@@ -195,6 +196,6 @@ async def cmd_term(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("일시적인 오류가 발생했어요 😥 잠시 후 다시 시도해 주세요!")
         return
 
-    parts = utils.split_message(explanation)
+    parts = utils.split_message(strip_markdown(explanation))
     for part in parts:
         await update.message.reply_text(part)

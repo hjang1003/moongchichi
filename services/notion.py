@@ -74,7 +74,6 @@ def _extract_section_title(content: str, date_str: str) -> str:
 class NotionService:
     def __init__(self):
         self._client = AsyncClient(auth=config.NOTION_API_KEY)
-        self._briefing_db_id = _normalize_notion_id(config.NOTION_BRIEFING_DATABASE_ID)
         self._saved_db_id = _normalize_notion_id(config.NOTION_SAVED_DATABASE_ID)
 
     async def _append_blocks(self, page_id: str, blocks: List[dict]) -> None:
@@ -84,32 +83,6 @@ class NotionService:
                 block_id=page_id,
                 children=blocks[i : i + BLOCK_BATCH_SIZE],
             )
-
-    async def save_to_briefing_db(
-        self,
-        date_str: str,
-        theme: str,
-        content: str,
-        sources: List[str],
-        saved: bool = False,
-    ) -> Optional[str]:
-        try:
-            sources_text = "\n".join(sources)[:RICH_TEXT_LIMIT]
-            response = await self._client.pages.create(
-                parent={"database_id": self._briefing_db_id},
-                properties={
-                    "날짜": {"date": {"start": date_str}},
-                    "요일테마": {"title": [{"text": {"content": theme[:255]}}]},
-                    "저장여부": {"checkbox": saved},
-                    "소스링크": {"rich_text": [{"type": "text", "text": {"content": sources_text}}]},
-                },
-            )
-            page_id = response["id"]
-            await self._append_blocks(page_id, _content_to_blocks(content))
-            return page_id
-        except Exception as e:
-            logger.error("Notion save_to_briefing_db failed: %s", e)
-            return None
 
     async def save_to_saved_db(
         self,
@@ -233,23 +206,6 @@ class NotionService:
                     await sheets.set_setting("NOTION_SAVED_DATABASE_ID", db_id)
                     logger.info("Auto-created Notion saved briefings DB: %s", db_id)
 
-    async def _create_briefing_db(self, parent_page_id: str) -> str:
-        try:
-            response = await self._client.databases.create(
-                parent={"type": "page_id", "page_id": parent_page_id},
-                title=[{"type": "text", "text": {"content": "마케팅 브리핑"}}],
-                properties={
-                    "요일테마": {"title": {}},
-                    "날짜": {"date": {}},
-                    "저장여부": {"checkbox": {}},
-                    "소스링크": {"rich_text": {}},
-                },
-            )
-            return _normalize_notion_id(response["id"])
-        except Exception as e:
-            logger.error("Failed to create briefing DB in Notion: %s", e)
-            return ""
-
     async def _create_saved_db(self, parent_page_id: str) -> str:
         try:
             response = await self._client.databases.create(
@@ -266,14 +222,6 @@ class NotionService:
         except Exception as e:
             logger.error("Failed to create saved briefings DB in Notion: %s", e)
             return ""
-
-    async def reset_briefing_db(self) -> None:
-        try:
-            response = await self._client.databases.query(database_id=self._briefing_db_id)
-            for page in response.get("results", []):
-                await self._client.pages.update(page_id=page["id"], archived=True)
-        except Exception as e:
-            logger.error("Notion reset_briefing_db failed: %s", e)
 
     async def reset_saved_db(self) -> None:
         try:
