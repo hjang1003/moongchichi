@@ -427,16 +427,33 @@ class ClaudeService:
 
 ※ 위 내용은 웹 검색으로 확인한 자료를 정리한 것입니다."""
 
+        # 서버가 검색 루프를 내부에서 돌면서 매 턴 시스템 프롬프트를 다시 처리한다.
+        # 검색 3회면 4턴이라 24,000 토큰짜리 지시문이 네 번 청구된다.
+        # 캐싱을 걸면 첫 턴만 제값이고 나머지는 10분의 1로 읽힌다.
+        # 캐시 최소 크기는 1,024 토큰인데 이 프롬프트는 그보다 훨씬 크다.
         message = await self._client.with_options(
             timeout=REQUEST_TIMEOUT_SEC, max_retries=0
         ).messages.create(
             model=config.CLAUDE_MAIN_MODEL,
             max_tokens=12000,
-            system=system_prompt,
+            system=[{
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": {"type": "ephemeral"},
+            }],
             thinking={"type": "disabled"},
             tools=[_web_search_tool(max_uses=max_uses)],
             messages=[{"role": "user", "content": user_prompt}],
         )
+        usage = getattr(message, "usage", None)
+        if usage is not None:
+            logger.info(
+                "브리핑 생성 토큰 — 입력 %s / 캐시읽기 %s / 캐시생성 %s / 출력 %s",
+                getattr(usage, "input_tokens", 0),
+                getattr(usage, "cache_read_input_tokens", 0),
+                getattr(usage, "cache_creation_input_tokens", 0),
+                getattr(usage, "output_tokens", 0),
+            )
         return BriefingResult(
             text=_trim_preamble(_extract_text(message), "📅"),
             search_uses=_count_search_uses(message),
