@@ -266,8 +266,11 @@ class ClaudeService:
             )
 
         if blocked_entities:
+            # 이론·캠페인만 전면 금지다. 브랜드를 여기 넣으면 안 된다.
+            # 브랜드에는 Warc·Nielsen 같은 출처 매체가 섞여 들어오는데,
+            # 전면 금지하면 그 매체를 출처로도 못 쓰게 되어 인용할 곳이 말라버린다.
             hard_lines = []
-            for etype in ("이론", "브랜드", "캠페인"):
+            for etype in ("이론", "캠페인"):
                 names = blocked_entities.get(etype) or []
                 if names:
                     hard_lines.append(f"[{etype}] " + ", ".join(names))
@@ -281,17 +284,24 @@ class ClaudeService:
                     + "\n".join(hard_lines)
                 )
 
-            people = blocked_entities.get("인물") or []
-            if people:
+            # 인물과 브랜드는 중심 소재로만 금지한다. 출처 인용과 스치는 언급은 허용이다.
+            soft_lines = []
+            for etype in ("인물", "브랜드"):
+                names = blocked_entities.get(etype) or []
+                if names:
+                    soft_lines.append(f"[{etype}] " + ", ".join(names))
+            if soft_lines:
                 system_prompt += (
-                    "\n\n[중심 소재 금지 인물]\n"
-                    "아래 인물들은 최근 브리핑에서 이미 다뤘다. "
-                    "이 인물을 항목의 중심 소재로 삼는 것은 금지다. "
-                    "인물명이 제목에 들어가거나, 그 인물의 이론·저서·발언이 한 항목의 주된 내용이 되면 위반이다. "
-                    "위반 시 답변 전체가 거부된다.\n"
-                    "다른 주제를 설명하다가 근거로 이름을 한 번 스쳐 언급하는 것은 허용된다. "
-                    "단 한 항목에서 두 문장 이상을 그 인물에게 쓰지 마라:\n"
-                    + ", ".join(people)
+                    "\n\n[중심 소재 금지]\n"
+                    "아래 이름들은 최근 브리핑에서 이미 다뤘다. "
+                    "이것을 항목의 중심 소재로 삼는 것은 금지다. "
+                    "이름이 제목에 들어가거나, 그 인물의 이론·저서·발언이나 그 브랜드의 사례가 "
+                    "한 항목의 주된 내용이 되면 위반이다. 위반 시 답변 전체가 거부된다.\n"
+                    "허용되는 것은 두 가지다. 첫째, 다른 주제를 설명하다가 근거나 예시로 "
+                    "이름을 한 번 스쳐 언급하는 것. 둘째, 출처로 인용하는 것. "
+                    "출처 표기와 참고 출처 목록에는 아무 제한 없이 써도 된다.\n"
+                    "단 한 항목에서 두 문장 이상을 여기 있는 이름에 쓰지 마라:\n"
+                    + "\n".join(soft_lines)
                 )
 
         if recent_sources:
