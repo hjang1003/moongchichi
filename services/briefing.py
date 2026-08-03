@@ -94,14 +94,41 @@ def strip_markdown(text: str) -> str:
     return text.strip()
 
 
-def extract_item_titles(sections: List[str]) -> List[str]:
-    """각 항목의 제목 줄만 뽑는다. 다음 브리핑에서 같은 구도를 피하는 데 쓴다."""
-    titles = []
+CORE_MAX_CHARS = 300
+DIGIT_RE = re.compile(r"\d")
+
+
+def extract_item_digests(sections: List[str]) -> List[str]:
+    """항목마다 "제목 :: 핵심 문단"을 뽑는다.
+
+    제목만으로는 "무신사 실적을 이미 다뤘다"는 걸 다음 브리핑이 알 수 없다.
+    수치와 사례가 들어 있는 핵심 문단까지 함께 남겨야 같은 통계 재인용을 막을 수 있다.
+    핵심 문단은 숫자가 가장 많은 문단으로 고른다. 배경 문단에는 수치가 거의 없다.
+    """
+    digests = []
     for s in sections:
-        first = next((ln.strip() for ln in s.split("\n") if ln.strip()), "")
-        if first:
-            titles.append(first.replace("|", "/"))  # 시트에 "|"로 join되므로 치환
-    return titles
+        lines = [ln.strip() for ln in s.split("\n") if ln.strip()]
+        if not lines:
+            continue
+        title = lines[0]
+
+        paragraphs = []
+        for p in s.split("\n\n"):
+            p = " ".join(p.split())
+            if not p or p == title:
+                continue
+            if p.startswith(("📌", "💡", "─", "━", "📎", "※")):
+                continue
+            paragraphs.append(p)
+
+        core = ""
+        if paragraphs:
+            core = max(paragraphs, key=lambda p: (len(DIGIT_RE.findall(p)), len(p)))
+            core = core[:CORE_MAX_CHARS]
+
+        digest = f"{title} :: {core}" if core else title
+        digests.append(digest.replace("|", "/"))  # 시트에 "|"로 join되므로 치환
+    return digests
 
 
 def strip_source_block(section: str) -> str:
@@ -358,7 +385,7 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
         "keywords": keywords,
         "pools": pools,
         "entities": entities,
-        "titles": extract_item_titles(content_sections),
+        "titles": extract_item_digests(content_sections),
         "theme": theme,
     }
 
@@ -454,6 +481,11 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
     except Exception as e:
         logger.error("Sheets history save failed: %s", e)
 
+    try:
+        await sheets.add_body(date_str, theme, briefing_data["briefing_text"])
+    except Exception as e:
+        logger.error("Sheets body save failed: %s", e)
+
     return True
 
 
@@ -528,5 +560,10 @@ async def create_and_send_briefing_to_many(
             )
         except Exception as e:
             logger.error("Sheets history save failed: %s", e)
+
+        try:
+            await sheets.add_body(date_str, theme, briefing_data["briefing_text"])
+        except Exception as e:
+            logger.error("Sheets body save failed: %s", e)
 
     return successes, failures

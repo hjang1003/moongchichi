@@ -23,6 +23,13 @@ HISTORY_TAB = "브리핑이력"
 
 HISTORY_HEADERS = ["날짜", "요일테마", "발송여부", "소스링크", "노션저장여부", "주제키워드", "영역분류", "엔티티", "항목제목"]
 
+# 본문 원문 보관용. 이력 탭과 분리해 둔다. 이력 탭은 브리핑마다 3회 읽히는데
+# 거기에 3000자짜리 본문이 붙으면 매번 필요 없는 데이터를 통째로 끌고 오게 된다.
+# 이 탭은 평상시 읽지 않는다. 나중에 재분석하거나 백필할 때만 꺼내 쓴다.
+BODY_TAB = "브리핑본문"
+BODY_HEADERS = ["날짜", "요일테마", "본문"]
+CELL_CHAR_LIMIT = 49000  # 구글 시트 셀 한도 5만 자에 여유를 둔 값
+
 # 최근 제목을 되돌아보는 범위(일). 제목은 차단이 아니라 "비슷하게 쓰지 마라"용 참고 자료다.
 TITLE_LOOKBACK_DAYS = 28
 # 엔티티 차단 목록과 함께 실려 나가는 최근 제목의 키. 시트 읽기를 한 번 더 하지 않으려고 같이 담는다.
@@ -148,6 +155,15 @@ class SheetsService:
             date_str, theme, str(sent), "|".join(sources),
             str(notion_saved), keywords_str, pools_str, entities_str, titles_str,
         ])
+
+    def _sync_add_body(self, date_str: str, theme: str, body: str) -> None:
+        """본문 원문을 보관 탭에 남긴다. 탭이 없으면 만든다."""
+        try:
+            ws = self._get_tab(BODY_TAB)
+        except gspread.exceptions.WorksheetNotFound:
+            ws = self._get_spreadsheet().add_worksheet(title=BODY_TAB, rows=1000, cols=3)
+            ws.append_row(BODY_HEADERS)
+        ws.append_row([date_str, theme, body[:CELL_CHAR_LIMIT]])
 
     def _sync_get_history(self, limit: int) -> List[Dict]:
         try:
@@ -358,6 +374,9 @@ class SheetsService:
             self._sync_add_history,
             date_str, theme, sent, sources, notion_saved, keywords, pools, entities, titles,
         )
+
+    async def add_body(self, date_str: str, theme: str, body: str) -> None:
+        await self._run(self._sync_add_body, date_str, theme, body)
 
     async def get_recent_sources(self, weeks: int = 4) -> List[str]:
         return await self._run(self._sync_get_recent_sources, weeks)
