@@ -12,7 +12,7 @@ from telegram.ext import (
 
 import config
 from handlers.onboarding import get_onboarding_handler
-from handlers.briefing import cmd_briefing, cmd_schedule, cmd_recap, cmd_topic, cmd_term
+from handlers.briefing import cmd_briefing, cmd_schedule, cmd_recap, cmd_term
 from handlers.admin import cmd_reset
 from handlers.general import (
     cmd_pause, cmd_resume, cmd_alarm,
@@ -66,7 +66,6 @@ def main() -> None:
     app.add_handler(CommandHandler("briefing", cmd_briefing))
     app.add_handler(CommandHandler("schedule", cmd_schedule))
     app.add_handler(CommandHandler("recap", cmd_recap))
-    app.add_handler(CommandHandler("topic", cmd_topic))
     app.add_handler(CommandHandler("term", cmd_term))
 
     # Admin

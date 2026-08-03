@@ -265,7 +265,6 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "/resume\n멈춰둔 브리핑을 다시 받고 싶을 때 사용해요.\n\n"
             "/schedule\n요일별 브리핑 내용을 확인할 수 있어요.\n\n"
             "/term [용어]\n마케팅 용어가 헷갈릴 때 입력하면 쉽게 설명해드려요.\n예: /term ROAS\n\n"
-            "/topic [주제]\n궁금한 마케팅 주제를 입력하면 즉석에서 브리핑을 만들어드려요.\n예: /topic 인스타그램 릴스 전략\n\n"
             "/update [항목] [값]\n프로필 항목을 수정할 수 있어요.\n예: /update 목표직무 브랜드마케터\n\n"
             "내일 아침 8시에 첫 브리핑으로 찾아올게요 🐾"
         )

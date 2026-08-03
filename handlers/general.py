@@ -265,7 +265,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/resume — 브리핑 재개\n"
         "/schedule — 요일별 브리핑 테마 안내\n"
         "/term [용어] — 마케팅 용어 설명\n"
-        "/topic [주제] — 특정 주제 브리핑\n"
         "/update [항목] [값] — 프로필 항목 수정\n"
         "/help — 명령어 목록\n\n"
         "💬 자연어로 질문도 가능해요!\n"

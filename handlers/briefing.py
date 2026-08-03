@@ -6,16 +6,9 @@ from telegram.ext import ContextTypes
 
 from handlers.auth import require_auth
 from services.sheets import get_sheets
-from services.notion import get_notion
 from services.claude import get_claude
-from services.briefing import (
-    create_and_send_briefing,
-    generate_with_search_verification,
-    parse_briefing_sections,
-    strip_markdown,
-)
+from services.briefing import create_and_send_briefing, strip_markdown
 import utils
-import config
 
 logger = logging.getLogger(__name__)
 
@@ -99,79 +92,6 @@ async def cmd_recap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"노션저장: {history_row.get('노션저장여부', '')}\n\n"
         f"📎 소스 링크:\n{sources or '없음'}"
     )
-
-
-async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await require_auth(update, context):
-        return
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "주제를 입력해 주세요!\n예: /topic 인플루언서 마케팅"
-        )
-        return
-
-    topic = " ".join(args)
-    claude = get_claude()
-
-    # Check if marketing-related (cheap model)
-    is_marketing = await claude.is_marketing_topic(topic)
-    if not is_marketing:
-        await update.message.reply_text(
-            "마케팅 관련 주제만 요청할 수 있어요 😊\n다른 주제를 시도해 보세요!"
-        )
-        return
-
-    await update.message.reply_text(f"📌 {topic} 브리핑을 작성 중이에요...")
-    sheets = get_sheets()
-    profile = await sheets.get_profile()
-    verified = await generate_with_search_verification(
-        lambda: claude.generate_topic_briefing(topic, profile, max_uses=2),
-        label=f"/topic 브리핑({topic})",
-    )
-    if verified is None:
-        await update.message.reply_text(
-            "지금은 확인된 자료를 찾지 못했어요. 잠시 후 다시 시도해 주세요"
-        )
-        return
-
-    briefing = strip_markdown(verified.text)
-    parts = utils.split_message(briefing)
-    for part in parts:
-        await update.message.reply_text(part)
-
-    # /topic으로 받은 브리핑도 이력에 저장 → 정기 브리핑이 같은 토픽 회피하도록
-    try:
-        now = utils.get_korea_now()
-        date_str = utils.date_to_str(now)
-        sources = verified.sources
-        sections = parse_briefing_sections(briefing)
-        content_sections = sections[1:-1] if len(sections) >= 3 else sections
-
-        try:
-            keywords = await claude.extract_keywords(briefing)
-        except Exception as e:
-            logger.error("Topic briefing keyword extraction failed: %s", e)
-            keywords = []
-
-        try:
-            pools = await claude.classify_briefing_pools(content_sections)
-        except Exception as e:
-            logger.error("Topic briefing pool classification failed: %s", e)
-            pools = ["T"] * len(content_sections)
-
-        await sheets.add_history(
-            date_str,
-            f"/topic: {topic}",
-            True,
-            sources,
-            False,
-            keywords=keywords,
-            pools=pools,
-        )
-    except Exception as e:
-        logger.error("Failed to save /topic history: %s", e)
-        # 발송은 이미 성공했으니 사용자에겐 알리지 않음
 
 
 async def cmd_term(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

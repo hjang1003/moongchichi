@@ -209,8 +209,8 @@ async def generate_with_search_verification(
 ) -> Optional[VerifiedBriefing]:
     """웹검색 근거가 확인될 때까지 재생성하는 공통 루프.
 
-    정기 브리핑과 /topic이 같은 검증 절차를 쓴다. 호출부별 차이(모델 메서드, max_uses,
-    시도 횟수, 로그 라벨)는 인자로 받고, 실패 시 사용자 안내는 호출부가 담당한다.
+    호출부별 차이(모델 메서드, max_uses, 시도 횟수, 로그 라벨)는 인자로 받고,
+    실패 시 사용자 안내는 호출부가 담당한다.
 
     재생성 조건: 예외 / 빈 본문 / 웹검색 0회 / stop_reason == "pause_turn" /
     검색으로 확인되지 않은 URL을 걷어낸 뒤 남은 출처 0개.

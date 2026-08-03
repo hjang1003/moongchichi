@@ -492,81 +492,6 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
         )
         return _extract_text(message)
 
-    async def generate_topic_briefing(
-        self, topic: str, profile: Dict[str, str], max_uses: int = 2
-    ) -> BriefingResult:
-        career = profile.get("경력수준", "신입")
-        system_prompt = (
-            "당신은 마케팅 주제 브리핑 작성 AI입니다.\n"
-            "부드럽고 친근한 존댓말로 작성합니다.\n"
-            "[출처 매체 기준]\n"
-            "좋은 예 — 국내: 아이보스, OpenAds, 모비인사이드, 매일경제, 한국경제, 조선비즈, 전자신문, "
-            "각 브랜드 공식 뉴스룸. 해외: Nielsen, Meta, Google, 대형 광고대행사, 주요 마케팅 전문 미디어.\n"
-            "나쁜 예 — 커뮤니티 자유게시판, 취업 커뮤니티, 개인 블로그, 네이버 카페, 티스토리, "
-            "채용 사이트 게시판.\n"
-            "나쁜 예에 해당하는 출처는 절대 사용 금지. 좋은 예에 해당하는 매체만 출처로 인정한다.\n"
-            "\n"
-            + SEARCH_GROUNDING_RULES
-        )
-        prompt = f"""마케팅 주제 "{topic}"에 대해 브리핑을 작성해 주세요.
-대상: {career} 마케터 지망생 / 관심 분야: {profile.get("관심업종", "")}
-
-작성을 시작하기 전에 web_search 도구로 먼저 검색하세요. 검색 없이 바로 작성하지 마세요.
-
-{SEARCH_GROUNDING_RULES}
-말투 지침:
-- 존댓말 사용. ~해요, ~예요, ~거든요, ~고요, ~네요, ~죠 같은 부드럽고 자연스러운 어미
-- 확인된 사실은 단정형으로 서술. '~라고 해요', '~다고 하네요', '~에 따르면'을 반복하지 마세요
-- 전망이나 해석처럼 단정할 수 없는 내용에만 인용체 사용
-- 마크다운 문법 절대 금지. **, ##, 표(|---|), 코드블록 전부 사용하지 마세요
-- 섹션 구분은 ━━━ 구분선으로만
-- 참고 출처 목록은 맨 마지막에 한 번만. 섹션마다 반복하지 마세요
-- 각 섹션 제목은 이모지 + 주제 형식으로
-- 자연스러운 문단으로 작성
-
-출력 형식:
-📌 {topic} 브리핑
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-🔍 [섹션 1 제목]
-
-[내용 문단]
-
-📌 출처: 기관명
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-🔍 [섹션 2 제목]
-
-(동일 구조 반복, 총 3~4개 섹션)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📎 참고 출처
-- 기관명 — https://검색결과에_실제로_나온_URL
-(각 줄에 반드시 http로 시작하는 실제 URL을 하나씩 포함할 것. URL 없는 줄은 쓰지 마세요.)
-
-※ 위 내용은 웹 검색으로 확인한 자료를 정리한 것입니다.
-
-1500자 이상으로 풍부하게 작성해 주세요. 단, 검색으로 확인된 내용이 부족하면 분량을 줄이세요. 분량을 채우려고 지어내지 마세요."""
-
-        message = await self._client.with_options(
-            timeout=REQUEST_TIMEOUT_SEC, max_retries=0
-        ).messages.create(
-            model=config.CLAUDE_MAIN_MODEL,
-            max_tokens=8000,
-            system=system_prompt,
-            thinking={"type": "disabled"},
-            tools=[_web_search_tool(max_uses=max_uses)],
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return BriefingResult(
-            text=_trim_preamble(_extract_text(message), "📌"),
-            search_uses=_count_search_uses(message),
-            stop_reason=getattr(message, "stop_reason", None),
-            searched_urls=_extract_searched_urls(message),
-        )
-
     async def extract_keywords(self, briefing_text: str) -> List[str]:
         prompt = (
             "아래 마케팅 브리핑에서 각 항목당 1~2개씩, 전체 최대 6개 키워드를 추출해 주세요.\n\n"
@@ -671,16 +596,6 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
             return parsed[:len(sections)]
         except Exception:
             return ["T"] * len(sections)
-
-    async def is_marketing_topic(self, topic: str) -> bool:
-        prompt = f'"{topic}"은 마케팅 관련 주제입니까? 예/아니오로만 답하세요.'
-        message = await self._client.messages.create(
-            model=config.CLAUDE_FAST_MODEL,
-            max_tokens=10,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        answer = _extract_text(message).strip().lower()
-        return "예" in answer or "yes" in answer
 
     async def parse_date_expression(self, expression: str, today_str: str) -> str:
         prompt = f"""오늘 날짜: {today_str}
