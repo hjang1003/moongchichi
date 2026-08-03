@@ -191,6 +191,7 @@ class ClaudeService:
         recent_sources: Optional[List[str]] = None,
         blocked_keywords_strict: Optional[List[str]] = None,
         blocked_keywords_medium: Optional[List[str]] = None,
+        blocked_entities: Optional[Dict[str, List[str]]] = None,
         max_uses: int = 3,
     ) -> BriefingResult:
         industry_ratio = profile.get("관심업종비율", "60")
@@ -263,6 +264,35 @@ class ClaudeService:
                 "위반 시 답변 전체가 거부된다:\n"
                 + "\n".join(f"- {kw}" for kw in blocked_keywords_medium)
             )
+
+        if blocked_entities:
+            hard_lines = []
+            for etype in ("이론", "브랜드", "캠페인"):
+                names = blocked_entities.get(etype) or []
+                if names:
+                    hard_lines.append(f"[{etype}] " + ", ".join(names))
+            if hard_lines:
+                system_prompt += (
+                    "\n\n[절대 금지 고유명사]\n"
+                    "아래 이름들은 최근 브리핑에서 이미 다룬 것이다. 오늘 브리핑에서는 절대 언급하지 마라. "
+                    "제목, 본문, 실무 포인트, 출처 어디에도 쓰지 마라. "
+                    "이 이름을 중심으로 한 항목은 물론이고 곁다리 예시로 끌어오는 것도 금지다. "
+                    "위반 시 답변 전체가 거부된다:\n"
+                    + "\n".join(hard_lines)
+                )
+
+            people = blocked_entities.get("인물") or []
+            if people:
+                system_prompt += (
+                    "\n\n[중심 소재 금지 인물]\n"
+                    "아래 인물들은 최근 브리핑에서 이미 다뤘다. "
+                    "이 인물을 항목의 중심 소재로 삼는 것은 금지다. "
+                    "인물명이 제목에 들어가거나, 그 인물의 이론·저서·발언이 한 항목의 주된 내용이 되면 위반이다. "
+                    "위반 시 답변 전체가 거부된다.\n"
+                    "다른 주제를 설명하다가 근거로 이름을 한 번 스쳐 언급하는 것은 허용된다. "
+                    "단 한 항목에서 두 문장 이상을 그 인물에게 쓰지 마라:\n"
+                    + ", ".join(people)
+                )
 
         if recent_sources:
             system_prompt += (
@@ -525,6 +555,49 @@ JSON 형식으로 파싱해서 반환해 주세요. 반드시 아래 키들만 �
         )
         raw = _extract_text(message).strip()
         return [k.strip() for k in raw.split(",") if k.strip()]
+
+    async def extract_entities(self, briefing_text: str) -> List[str]:
+        """브리핑에 등장한 고유명사를 '유형:이름' 형식으로 추출한다.
+
+        키워드 추출(extract_keywords)이 GA4·ROAS 같은 좁은 토큰만 뽑도록 튜닝돼 있어서
+        인물·이론·브랜드·캠페인 단위 반복을 못 잡는다. 그 구멍을 메우는 용도다.
+        """
+        prompt = (
+            "아래 마케팅 브리핑에서 실제로 언급된 고유명사를 유형과 함께 추출해 주세요.\n\n"
+            "유형은 다음 4가지만 사용하세요: 인물, 이론, 브랜드, 캠페인\n"
+            "- 인물: 마케팅 학자, 저자, 경영진 등 실존 인물 이름\n"
+            "- 이론: 프레임워크, 개념, 저서에서 나온 이론 이름\n"
+            "- 브랜드: 기업명, 제품 브랜드명, 플랫폼명\n"
+            "- 캠페인: 특정 캠페인·광고 시리즈의 고유 명칭\n\n"
+            "좋은 예: 세스 고딘, 필립 코틀러, 4P, AARRR, 퍼미션 마케팅, 보라색 소, "
+            "이케아, 애플, 나이키, Just Do It, Real Beauty\n"
+            "나쁜 예: 마케팅, 콘텐츠, 브랜딩, AI, 소비자, 캠페인, 트렌드 같은 일반명사는 절대 추출하지 마세요\n\n"
+            "출력 형식은 '유형:이름'을 세로줄(|)로 이어붙인 한 줄입니다. 설명은 쓰지 마세요.\n"
+            "예시 답변: 인물:세스 고딘|이론:퍼미션 마케팅|브랜드:이케아|캠페인:Just Do It\n"
+            "해당하는 고유명사가 없으면 아무것도 쓰지 말고 빈 줄로 답하세요.\n\n"
+            f"브리핑:\n{briefing_text[:3000]}"
+        )
+        message = await self._client.messages.create(
+            model=config.CLAUDE_FAST_MODEL,
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = _extract_text(message).strip()
+        entities: List[str] = []
+        seen = set()
+        for token in raw.split("|"):
+            token = token.strip()
+            if not token or ":" not in token:
+                continue
+            etype, _, name = token.partition(":")
+            etype, name = etype.strip(), name.strip()
+            if etype not in ("인물", "이론", "브랜드", "캠페인") or not name:
+                continue
+            key = f"{etype}:{name}"
+            if key not in seen:
+                seen.add(key)
+                entities.append(key)
+        return entities
 
     async def classify_briefing_pools(self, sections: List[str]) -> List[str]:
         """Classify each section into T/F/G. Returns list of strings same length as sections."""

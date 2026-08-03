@@ -276,10 +276,12 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
     try:
         recent_sources = await sheets.get_recent_sources(weeks=8)
         blocked = await sheets.get_blocked_keywords()
+        blocked_entities = await sheets.get_blocked_entities()
     except Exception as e:
         logger.error("Failed to load recent history from sheets: %s", e)
         recent_sources = []
         blocked = {"strict": [], "medium": []}
+        blocked_entities = {}
 
     verified = await generate_with_search_verification(
         lambda: claude.generate_briefing(
@@ -287,6 +289,7 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
             recent_sources=recent_sources,
             blocked_keywords_strict=blocked.get("strict", []),
             blocked_keywords_medium=blocked.get("medium", []),
+            blocked_entities=blocked_entities,
             max_uses=3,
         ),
         label="정기 브리핑",
@@ -314,12 +317,19 @@ async def _generate_briefing_data(date_str: str, theme: str, weekday_ko: str) ->
         logger.error("Pool classification failed: %s", e)
         pools = ["T"] * len(content_sections)
 
+    try:
+        entities = await claude.extract_entities(briefing_text)
+    except Exception as e:
+        logger.error("Entity extraction failed: %s", e)
+        entities = []
+
     return {
         "briefing_text": briefing_text,
         "sections": sections,
         "sources": sources,
         "keywords": keywords,
         "pools": pools,
+        "entities": entities,
         "theme": theme,
     }
 
@@ -408,6 +418,7 @@ async def create_and_send_briefing(context, chat_id: int) -> bool:
             date_str, theme, True, briefing_data["sources"], False,
             keywords=briefing_data["keywords"],
             pools=briefing_data["pools"],
+            entities=briefing_data.get("entities", []),
         )
     except Exception as e:
         logger.error("Sheets history save failed: %s", e)
@@ -481,6 +492,7 @@ async def create_and_send_briefing_to_many(
                 date_str, theme, True, briefing_data["sources"], False,
                 keywords=briefing_data["keywords"],
                 pools=briefing_data["pools"],
+                entities=briefing_data.get("entities", []),
             )
         except Exception as e:
             logger.error("Sheets history save failed: %s", e)

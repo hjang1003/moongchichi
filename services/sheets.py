@@ -21,7 +21,12 @@ SETTINGS_TAB = "설정"
 PROFILE_TAB = "프로필"
 HISTORY_TAB = "브리핑이력"
 
-HISTORY_HEADERS = ["날짜", "요일테마", "발송여부", "소스링크", "노션저장여부", "주제키워드", "영역분류"]
+HISTORY_HEADERS = ["날짜", "요일테마", "발송여부", "소스링크", "노션저장여부", "주제키워드", "영역분류", "엔티티"]
+
+# 엔티티 유형별 차단 기간(일). 유형 표기는 claude.extract_entities 출력과 반드시 일치해야 한다.
+ENTITY_BLOCK_DAYS = {"인물": 90, "이론": 90, "브랜드": 45, "캠페인": 180}
+# 이력을 훑는 범위. 가장 긴 차단 기간(캠페인 180일)과 맞춘다.
+ENTITY_LOOKBACK_DAYS = 180
 
 
 class SheetsService:
@@ -117,6 +122,7 @@ class SheetsService:
         self, date_str: str, theme: str, sent: bool, sources: List[str], notion_saved: bool,
         keywords: Optional[List[str]] = None,
         pools: Optional[List[str]] = None,
+        entities: Optional[List[str]] = None,
     ) -> None:
         ws = self._get_tab(HISTORY_TAB)
         existing = ws.get_all_values()
@@ -130,9 +136,10 @@ class SheetsService:
                     ws.update_cell(1, i + 1, expected)
         keywords_str = "|".join(keywords) if keywords else ""
         pools_str = "|".join(pools) if pools else ""
+        entities_str = "|".join(entities) if entities else ""
         ws.append_row([
             date_str, theme, str(sent), "|".join(sources),
-            str(notion_saved), keywords_str, pools_str,
+            str(notion_saved), keywords_str, pools_str, entities_str,
         ])
 
     def _sync_get_history(self, limit: int) -> List[Dict]:
@@ -240,6 +247,50 @@ class SheetsService:
                 medium_list.append(kw)
         return {"strict": strict_list, "medium": medium_list}
 
+    def _sync_get_blocked_entities(self) -> Dict[str, List[str]]:
+        """유형별 차단 엔티티를 돌려준다. {'인물': [...], '이론': [...], '브랜드': [...], '캠페인': [...]}
+
+        최근 ENTITY_LOOKBACK_DAYS 이력에서 '유형:이름' 토큰을 파싱해 이름별 마지막 등장일을 구하고,
+        유형별 차단 기간(ENTITY_BLOCK_DAYS) 이내면 차단 목록에 넣는다.
+        키워드 차단과 달리 등장 횟수는 보지 않는다. 한 번만 나와도 차단 기간 동안 막는다.
+        """
+        import datetime
+        blocked: Dict[str, List[str]] = {etype: [] for etype in ENTITY_BLOCK_DAYS}
+        try:
+            ws = self._get_tab(HISTORY_TAB)
+        except gspread.exceptions.WorksheetNotFound:
+            return blocked
+        now = datetime.datetime.now()
+        lookback_cutoff = (now - datetime.timedelta(days=ENTITY_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+        latest: Dict[str, Dict[str, str]] = {etype: {} for etype in ENTITY_BLOCK_DAYS}
+        for row in ws.get_all_records():
+            date_val = str(row.get("날짜", ""))
+            if not date_val or date_val < lookback_cutoff:
+                continue
+            raw = str(row.get("엔티티", ""))
+            if not raw:
+                continue
+            for token in raw.split("|"):
+                token = token.strip()
+                if not token or ":" not in token:
+                    continue
+                etype, _, name = token.partition(":")
+                etype, name = etype.strip(), name.strip()
+                if not name or etype not in latest:
+                    continue
+                if date_val > latest[etype].get(name, ""):
+                    latest[etype][name] = date_val
+        for etype, names in latest.items():
+            block_days = ENTITY_BLOCK_DAYS[etype]
+            for name, last_date in names.items():
+                try:
+                    last_dt = datetime.datetime.strptime(last_date, "%Y-%m-%d")
+                except ValueError:
+                    continue
+                if (now - last_dt).days <= block_days:
+                    blocked[etype].append(name)
+        return blocked
+
     def _sync_get_pool_distribution(self, weeks: int) -> Dict[str, int]:
         """Returns {'T': n, 'F': n, 'G': n} count for last `weeks` weeks."""
         import datetime
@@ -282,8 +333,12 @@ class SheetsService:
         self, date_str: str, theme: str, sent: bool, sources: List[str], notion_saved: bool,
         keywords: Optional[List[str]] = None,
         pools: Optional[List[str]] = None,
+        entities: Optional[List[str]] = None,
     ) -> None:
-        await self._run(self._sync_add_history, date_str, theme, sent, sources, notion_saved, keywords, pools)
+        await self._run(
+            self._sync_add_history,
+            date_str, theme, sent, sources, notion_saved, keywords, pools, entities,
+        )
 
     async def get_recent_sources(self, weeks: int = 4) -> List[str]:
         return await self._run(self._sync_get_recent_sources, weeks)
@@ -293,6 +348,9 @@ class SheetsService:
 
     async def get_blocked_keywords(self) -> Dict[str, List[str]]:
         return await self._run(self._sync_get_blocked_keywords)
+
+    async def get_blocked_entities(self) -> Dict[str, List[str]]:
+        return await self._run(self._sync_get_blocked_entities)
 
     async def get_pool_distribution(self, weeks: int = 4) -> Dict[str, int]:
         return await self._run(self._sync_get_pool_distribution, weeks)
