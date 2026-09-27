@@ -404,6 +404,9 @@ async def _send_briefing_to_chat(context, chat_id: int, date_str: str, briefing_
         content_sections = [strip_markdown(strip_source_block(s)) for s in sections[1:-1]]
         content_sections = [s for s in content_sections if s.strip()]
         header = strip_markdown(header)
+        # 2026-09-28 하루만 첫 메시지 교체. 다른 날은 원래 헤더 그대로.
+        if date_str == "2026-09-28":
+            header = "뭉치치는 잠깐 아빠랑 산책가써! 그래서 우땅땅이가 대신 와써!"
 
         try:
             await context.bot.send_message(chat_id=chat_id, text=header)
