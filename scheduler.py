@@ -19,7 +19,7 @@ WEEKDAYS = (0, 1, 2, 3, 4)
 _KR_HOLIDAYS = holidays.country_holidays("KR")
 
 # 패키지가 모르는 임시공휴일이 생기면 여기에 추가
-MANUAL_KR_HOLIDAYS: set[date] = set()
+MANUAL_KR_HOLIDAYS: set[date] = {date(2026, 10, 7), date(2026, 10, 8)}  # 2026-10 둘째 주 휴무
 
 
 def is_korean_holiday(d: date) -> bool:
